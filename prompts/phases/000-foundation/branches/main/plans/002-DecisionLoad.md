@@ -156,18 +156,18 @@ func Load(ctx context.Context, opt LoadOptions, stdout, stderr io.Writer) error
 
 ## Step-by-Step Implementation Guide
 
-1. **[ ] Semaphore tests, then client**:
+1. **[x] Semaphore tests, then client**:
     *   Edit `features/decision-test/internal/engine/llamacpp_test.go` for capacities 1 and 2, and health during a held slot.
     *   Edit `features/decision-test/internal/engine/llamacpp.go` and `NewClient` call sites. Update `features/decision-test/internal/config/config.go` so 0 means 1 and negative fails.
-2. **[ ] Launch flag**:
+2. **[x] Launch flag**:
     *   Edit `scripts/setup/run_llama_server.sh` to accept `--parallel`.
     *   Add `llama_parallel: 1` to the committed `settings/decision-test.yaml` without taking the local port edit.
-3. **[ ] Load CLI tests, then command**:
+3. **[x] Load CLI tests, then command**:
     *   Add `features/decision-test/internal/cli/load_test.go`, then `load.go`, then the cobra command in `features/decision-test/cmd/decision-test/main.go`.
-4. **[ ] Integration**:
+4. **[x] Integration**:
     *   Add `-timeout 45m` to `scripts/process/integration_test.sh`.
     *   Add `TestDecisionSystemOne_Load` to `tests/decision_systemone_test.go`.
-5. **[ ] Verification Plan**:
+5. **[x] Verification Plan**:
     *   Run the commands below. Do not finish while they fail.
     *   Write the section 12 verdict into this file after the runs.
 
@@ -207,9 +207,29 @@ GUI の E2E は作らない。計測対象はローカル HTTP と CLI である
 3.  **迂回**: セマフォが常に 1 だと容量 2 のテストが落ちる。`--parallel` を無視すると統合のスロット 4 で文脈または待ち時間が 1 と区別できないが、合否は 200 なので、起動引数に `-np` がその N であることをテストがプロセス生成時に固定する。
 4.  **依存**: セマフォと load の単体が通ってから統合に進む。
 
-### 総合判定
+### 総合判定結果
 
-全テスト完了後、testing-rules の §12.2 を実ログに対して確認し、この節に判定を書く。
+**判定**: ✅ 動作確認完了
+
+#### テスト結果サマリ
+- 全テスト数: 単体は `./scripts/process/build.sh`。統合は Load と DirectAccount の 2 件。Load の中の計測は 12 回
+- 成功: 単体すべて、統合 2 件、計測 12 回すべて HTTP 200
+- 失敗: 0 件
+- 事実上スキップ: 0 件
+
+#### チェック項目の結果
+| # | チェック項目 | 結果 | 備考 |
+|---|------------|------|------|
+| 1 | スキップされたテスト | ✅ | SKIP は無い。モデルとバイナリは Fatal で、欠如していない |
+| 2 | 部分的なエラー | ✅ | 統合ログに ERROR と panic は無い。各スロットの API ログに level=ERROR が無いことをテストが確認した |
+| 3 | 迂回処理による偽成功 | ✅ | 容量 1 と 2 の単体が同時数を見ている。12 回は 200 以外、errors、slots 不一致で落ちる。スループット比例は合格線にしていない |
+| 4 | アダプタ・コンフィグの誤適用 | ✅ | Load は 127.0.0.1:18280 と api_port 18199、llama_parallel を N にした設定で起動した。DirectAccount は利用者の llama URL のまま |
+| 5 | テスト間の依存・順序問題 | ✅ | スロットごとに llama を止めてから次の N を起動する。DirectAccount は Load より前に別ポートで通った |
+| 6 | カバレッジの妥当性 | ✅ | 受理、集計、health の 3 秒、choice 退行を見た。GPU 使用率とスロット 8 以上は仕様が要求していない |
+| 7 | 外部システムの状態 | ✅ | 計測用 llama の /health が 200 になってから API を起動した。利用者の 18080 と 18081 はテストが kill していない |
+
+#### 判定理由
+12 回はすべて success がリクエスト数と一致し、statuses は 200 だけ、wall_ms は 0 より大きかった。concurrency 50 の最中に health が 3 秒以内に返った。スループットはスロット 1 の 100 件で約 26 rps、スロット 4 の 100 件で約 34 rps で、比例してはいない。仕様は比例を合格線にしないので、これは不合格にしない。
 
 ## Documentation
 

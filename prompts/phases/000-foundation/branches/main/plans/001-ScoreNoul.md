@@ -214,25 +214,25 @@ func Messages(state string, instructions string, criteria []domain.Criterion, mo
 
 ## Step-by-Step Implementation Guide
 
-1. **[ ] Domain tests, then parser**:
+1. **[x] Domain tests, then parser**:
     *   Edit `features/decision-test/internal/domain/validate_test.go` with the accept and 422 cases above.
     *   Edit `features/decision-test/internal/domain/types.go` and `features/decision-test/internal/domain/validate.go` until those tests pass.
     *   `Generation.MarshalJSON` emits `choice` only when `EmitChoice` is true.
-2. **[ ] Weighted score**:
+2. **[x] Weighted score**:
     *   Edit `features/decision-test/internal/decision/math_test.go`, then add `WeightedScore` to `features/decision-test/internal/decision/math.go`.
-3. **[ ] Prompt sentence**:
+3. **[x] Prompt sentence**:
     *   Edit `features/decision-test/internal/prompt/prompt_test.go`, then add the `questionType` argument and the two sentences in `features/decision-test/internal/prompt/prompt.go`.
     *   Update every `Messages` call site in the same step so the package builds.
-4. **[ ] Aggregation**:
+4. **[x] Aggregation**:
     *   Edit `features/decision-test/internal/decision/generate_test.go` and `features/decision-test/internal/decision/service_test.go`.
     *   Edit `features/decision-test/internal/decision/service.go` so direct, generation, and both fill score and noul as specified. Do not set `ElapsedMs`.
     *   Add the grammar assertion in `features/decision-test/internal/engine/llamacpp_test.go`. Do not change `generationGrammar`.
-5. **[ ] API and CLI**:
+5. **[x] API and CLI**:
     *   Rewrite the score 422 expectation in `features/decision-test/internal/api/api_test.go`. Add the fixture 422 cases and the direct score / noul shape checks.
     *   Edit `features/decision-test/internal/cli/decide_test.go`, then `features/decision-test/internal/cli/decide.go`.
-6. **[ ] Integration tests**:
+6. **[x] Integration tests**:
     *   Add the four `TestDecisionSystemOne_*` functions to `tests/decision_systemone_test.go` before running them.
-7. **[ ] Verification Plan**:
+7. **[x] Verification Plan**:
     *   Run the commands in Verification Plan. Do not finish while they fail.
     *   After they pass, write the section 12 verdict into this plan's Verification Plan and mark these boxes.
 
@@ -280,9 +280,29 @@ GUI の E2E は作らない。この機能は VSCode 拡張ではなく、ロー
 
 観点: 正常系（score 3 段階、noul ありなし、混在、generation、both）、異常系（シナリオ 6 と空白・重複）、外部連携（統合の llama `/health` と GGUF）、一貫性（生成分布から同じ score / noul を再計算）、状態（valid false は 200 のまま決定値なし）、設定（method はリクエスト全体。CLI `--method` が配列を壊さない）、副作用（Engine 呼び出し 0、ERROR ログなし）。
 
-### 総合判定
+### 総合判定結果
 
-全テスト完了後、testing-rules の §12.2 を実ログに対して確認し、この節に判定を書く。「全テスト成功」だけでは動作確認完了にしない。
+**判定**: ✅ 動作確認完了
+
+#### テスト結果サマリ
+- 全テスト数: 単体は `./scripts/process/build.sh` の decision-test 全パッケージ。統合は 8 件（Health、DirectAccount、GenerationEmail、BothOrder、Score、Noul、NoulDefaultCriteria、Mixed）
+- 成功: 単体すべて、統合 8 件
+- 失敗: 0 件
+- 事実上スキップ: 0 件
+
+#### チェック項目の結果
+| # | チェック項目 | 結果 | 備考 |
+|---|------------|------|------|
+| 1 | スキップされたテスト | ✅ | 統合ログに SKIP は無い。モデル欠如は Fatal だが発生していない |
+| 2 | 部分的なエラー | ✅ | 統合ログに ERROR、panic、recovered は無い。Mixed は API ログの level=ERROR を不合格にする |
+| 3 | 迂回処理による偽成功 | ✅ | 加重平均、false 先の true=A、noul から confidence を落とす単体が先に通っている |
+| 4 | アダプタ・コンフィグの誤適用 | ✅ | health の model は minicpm5-2b-q4_k_m。推論は利用者の llama URL |
+| 5 | テスト間の依存・順序問題 | ✅ | 各テストが別ポートで API を起動し、互いの状態を共有しない |
+| 6 | カバレッジの妥当性 | ✅ | score、noul、省略 criteria、混在、choice 退行が統合にある。Jev 校正値との一致は仕様が要求していない |
+| 7 | 外部システムの状態 | ✅ | 実行前に llama の /health が 200 だった |
+
+#### 判定理由
+score は段階インデックスの加重平均、noul は true 側の確率だけ、という完了条件を単体と実モデルの両方で確認した。choice の既存 4 本も同じ実行で通った。校正値の一致は見ていないが、仕様の対象外である。
 
 ## Documentation
 
