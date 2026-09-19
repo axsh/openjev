@@ -44,6 +44,7 @@ func main() {
 	root := command.Root()
 	root.AddCommand(serveCommand(rt))
 	root.AddCommand(decideCommand())
+	root.AddCommand(loadCommand())
 	command.Run()
 }
 
@@ -125,6 +126,57 @@ func runDecide(opts *serverOptions, input, server, method string, asJSON bool) e
 	}, os.Stdout, os.Stderr)
 }
 
+func loadCommand() *cobra.Command {
+	var input, server, method string
+	var concurrency, slots int
+	var asJSON bool
+	cmd := &cobra.Command{
+		Use: "load",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if concurrency < 1 || slots < 1 {
+				return fmt.Errorf("concurrency and slots must be >= 1")
+			}
+			var err error
+			humacli.WithOptions(func(cmd *cobra.Command, args []string, opts *serverOptions) {
+				err = runLoad(opts, input, server, method, concurrency, slots, asJSON)
+			})(cmd, args)
+			return err
+		},
+	}
+	cmd.Flags().StringVar(&input, "input", "", "Request JSON file")
+	cmd.Flags().StringVar(&server, "server", "", "API base URL")
+	cmd.Flags().StringVar(&method, "method", "", "Override options.method")
+	cmd.Flags().IntVar(&concurrency, "concurrency", 0, "Number of parallel requests")
+	cmd.Flags().IntVar(&slots, "slots", 0, "Slot count recorded in the report")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "Print the report as JSON")
+	_ = cmd.MarkFlagRequired("input")
+	_ = cmd.MarkFlagRequired("concurrency")
+	_ = cmd.MarkFlagRequired("slots")
+	return cmd
+}
+
+func runLoad(opts *serverOptions, input, server, method string, concurrency, slots int, asJSON bool) error {
+	if server == "" {
+		cfg, err := config.Load(opts.Config)
+		if err != nil {
+			return err
+		}
+		port := cfg.APIPort
+		if opts.Port != 0 {
+			port = opts.Port
+		}
+		server = fmt.Sprintf("http://%s:%d", cfg.APIHost, port)
+	}
+	return cli.Load(context.Background(), cli.LoadOptions{
+		Input:       input,
+		Server:      server,
+		Method:      method,
+		Concurrency: concurrency,
+		Slots:       slots,
+		JSON:        asJSON,
+	}, os.Stdout, os.Stderr)
+}
+
 func buildServer(opts *serverOptions) (*http.Server, *logger.Logger, error) {
 	cfg, err := config.Load(opts.Config)
 	if err != nil {
@@ -142,7 +194,7 @@ func buildServer(opts *serverOptions) (*http.Server, *logger.Logger, error) {
 		output = file
 	}
 	log := logger.New(output).WithComponent("decision")
-	eng := engine.NewClient(cfg.LlamaURL, log)
+	eng := engine.NewClient(cfg.LlamaURL, log, cfg.LlamaParallel)
 	labels, labelErr := engine.ResolveLabels(context.Background(), eng)
 	var svc *decision.Service
 	readyErr := ""

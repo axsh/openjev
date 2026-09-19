@@ -51,7 +51,8 @@ Options:
                        (passed to 'go test -run')
   --help               Show this help message
 
-Go tests are executed with -tags integration.
+Go tests are executed with -tags integration and -timeout 45m.
+The timeout is longer than the Go default because the decision load matrix can exceed 10 minutes.
 
 Exit Codes:
   0 = All tests passed (or no tests to run)
@@ -122,7 +123,7 @@ main() {
 
     cd "$PROJECT_ROOT/tests"
 
-    local go_test_args=("-v" "-count=1" "-tags" "integration")
+    local go_test_args=("-v" "-count=1" "-timeout" "45m" "-tags" "integration")
     if [[ -n "$SPECIFY" ]]; then
         go_test_args+=("-run" "$SPECIFY")
         info "Test filter: $SPECIFY"

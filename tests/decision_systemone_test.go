@@ -4,6 +4,7 @@ package tests
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -641,4 +642,207 @@ func yamlValue(raw, key string) string {
 		}
 	}
 	return ""
+}
+
+func TestDecisionSystemOne_Load(t *testing.T) {
+	root := repoRoot(t)
+	settings := string(readRepo(t, root, filepath.Join("settings", "decision-test.yaml")))
+	model := filepath.Join(root, yamlValue(settings, "model_path"))
+	llamaBin := filepath.Join(root, yamlValue(settings, "llama_binary"))
+	requireFile(t, model)
+	requireFile(t, llamaBin)
+	apiBin, err := binaryPath(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := filepath.Join(root, "features", "decision-test", "testdata", "account.json")
+	requireFile(t, input)
+	for _, slots := range []int{1, 2, 4} {
+		llama, llamaLogs := startOwnedLlama(t, llamaBin, model, slots)
+		logPath := filepath.Join(t.TempDir(), "decision.log")
+		cfg := writeSlotConfig(t, root, slots, logPath)
+		api, apiLogs := startOwnedAPI(t, root, apiBin, cfg)
+		base := "http://127.0.0.1:18199"
+		for _, n := range []int{1, 10, 50, 100} {
+			report := runLoad(t, apiBin, input, base, slots, n, n == 50)
+			t.Logf("slots=%d concurrency=%d success=%d errors=%d wall_ms=%.3f throughput_rps=%.3f statuses=%v", report.Slots, report.Concurrency, report.Success, report.Errors, report.WallMs, report.ThroughputRps, report.Statuses)
+			if report.Slots != slots || report.Concurrency != n || report.Requests != n || report.Success != n || report.Errors != 0 || report.WallMs <= 0 {
+				t.Fatalf("report %+v", report)
+			}
+			if len(report.Statuses) != 1 || report.Statuses["200"] != n {
+				t.Fatalf("statuses %+v", report.Statuses)
+			}
+		}
+		logRaw, err := os.ReadFile(logPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(logRaw), "level=ERROR") {
+			t.Fatalf("api log has ERROR\n%s\n%s\n%s", logRaw, apiLogs.String(), llamaLogs.String())
+		}
+		stopProcess(api)
+		stopProcess(llama)
+	}
+}
+
+func startOwnedLlama(t *testing.T, binary, model string, slots int) (*exec.Cmd, *bytes.Buffer) {
+	t.Helper()
+	cmd := exec.Command(binary, "-m", model, "-c", "2048", "-b", "512", "-ngl", "99", "-np", strconv.Itoa(slots), "--jinja", "--host", "127.0.0.1", "--port", "18280")
+	logs := &bytes.Buffer{}
+	cmd.Stdout = logs
+	cmd.Stderr = logs
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { stopProcess(cmd) })
+	deadline := time.Now().Add(3 * time.Minute)
+	var last error
+	for time.Now().Before(deadline) {
+		last = getOK("http://127.0.0.1:18280/health")
+		if last == nil {
+			return cmd, logs
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	stopProcess(cmd)
+	t.Fatalf("llama slots %d not ready: %v\n%s", slots, last, logs.String())
+	return nil, nil
+}
+
+func startOwnedAPI(t *testing.T, root, bin, cfg string) (*exec.Cmd, *bytes.Buffer) {
+	t.Helper()
+	cmd := exec.Command(bin, "--config", cfg)
+	cmd.Dir = root
+	logs := &bytes.Buffer{}
+	cmd.Stdout = logs
+	cmd.Stderr = logs
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { stopProcess(cmd) })
+	base := "http://127.0.0.1:18199"
+	deadline := time.Now().Add(4 * time.Minute)
+	var last string
+	for time.Now().Before(deadline) {
+		resp, err := http.Get(base + "/health")
+		if err != nil {
+			time.Sleep(300 * time.Millisecond)
+			continue
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		last = string(body)
+		if resp.StatusCode == http.StatusOK && strings.Contains(last, `"ready":true`) {
+			return cmd, logs
+		}
+		if resp.StatusCode == http.StatusServiceUnavailable {
+			stopProcess(cmd)
+			t.Fatalf("api not ready: %s\n%s", last, logs.String())
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+	stopProcess(cmd)
+	t.Fatalf("api did not become ready: %s\n%s", last, logs.String())
+	return nil, nil
+}
+
+func writeSlotConfig(t *testing.T, root string, slots int, logPath string) string {
+	t.Helper()
+	raw := readRepo(t, root, filepath.Join("settings", "decision-test.yaml"))
+	lines := strings.Split(string(raw), "\n")
+	sawParallel := false
+	for i, line := range lines {
+		trim := strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(trim, "api_port:"):
+			lines[i] = "api_port: 18199"
+		case strings.HasPrefix(trim, "llama_url:"):
+			lines[i] = "llama_url: http://127.0.0.1:18280"
+		case strings.HasPrefix(trim, "llama_port:"):
+			lines[i] = "llama_port: 18280"
+		case strings.HasPrefix(trim, "llama_parallel:"):
+			lines[i] = "llama_parallel: " + strconv.Itoa(slots)
+			sawParallel = true
+		case strings.HasPrefix(trim, "log_path:"):
+			lines[i] = "log_path: " + strconv.Quote(filepath.ToSlash(logPath))
+		}
+	}
+	if !sawParallel {
+		lines = append(lines, "llama_parallel: "+strconv.Itoa(slots))
+	}
+	path := filepath.Join(t.TempDir(), "decision-test.yaml")
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+type loadReport struct {
+	Slots         int            `json:"slots"`
+	Concurrency   int            `json:"concurrency"`
+	Requests      int            `json:"requests"`
+	Success       int            `json:"success"`
+	Errors        int            `json:"errors"`
+	Statuses      map[string]int `json:"statuses"`
+	WallMs        float64        `json:"wall_ms"`
+	ThroughputRps float64        `json:"throughput_rps"`
+}
+
+func runLoad(t *testing.T, bin, input, server string, slots, n int, watchHealth bool) loadReport {
+	t.Helper()
+	cmd := exec.Command(bin, "load", "--input", input, "--server", server, "--method", "direct", "--concurrency", strconv.Itoa(n), "--slots", strconv.Itoa(slots), "--json")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if watchHealth {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		healthy := false
+		for {
+			if ctx.Err() != nil {
+				break
+			}
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, server+"/health", nil)
+			if err != nil {
+				break
+			}
+			resp, err := http.DefaultClient.Do(req)
+			if err == nil {
+				body, _ := io.ReadAll(resp.Body)
+				resp.Body.Close()
+				if resp.StatusCode == http.StatusOK && strings.Contains(string(body), `"ready":true`) {
+					healthy = true
+					break
+				}
+			}
+			select {
+			case <-ctx.Done():
+			case <-time.After(50 * time.Millisecond):
+			}
+		}
+		if !healthy {
+			stopProcess(cmd)
+			t.Fatalf("health during slots=%d concurrency=%d stderr=%s", slots, n, stderr.String())
+		}
+	}
+	waitErr := cmd.Wait()
+	var report loadReport
+	if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &report); err != nil {
+		t.Fatalf("load json %v stdout %s stderr %s wait %v", err, stdout.String(), stderr.String(), waitErr)
+	}
+	if waitErr != nil || report.Errors != 0 {
+		t.Fatalf("load failed %v report %+v stderr %s", waitErr, report, stderr.String())
+	}
+	return report
+}
+
+func stopProcess(cmd *exec.Cmd) {
+	if cmd == nil || cmd.Process == nil {
+		return
+	}
+	_ = cmd.Process.Kill()
+	_, _ = cmd.Process.Wait()
 }

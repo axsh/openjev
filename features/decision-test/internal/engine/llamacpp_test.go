@@ -26,7 +26,7 @@ func TestDirectRequestShape(t *testing.T) {
 		_, _ = io.WriteString(w, `{"choices":[{"logprobs":{"content":[{"top_logprobs":[{"id":54,"logprob":-0.1},{"id":55,"logprob":-1},{"token":"x","logprob":-2}]}]}}],"usage":{"prompt_tokens":2,"completion_tokens":1}}`)
 	}))
 	defer srv.Close()
-	client := NewClient(srv.URL, nil)
+	client := NewClient(srv.URL, nil, 1)
 	result, err := client.ReadLabelLogprobs(context.Background(), []prompt.Message{{Role: "user", Content: "x"}}, []Label{{Letter: "A", TokenID: 54}, {Letter: "B", TokenID: 55}})
 	if err != nil {
 		t.Fatal(err)
@@ -67,7 +67,7 @@ func TestTopLogprobsScales(t *testing.T) {
 	for i := range labels {
 		labels[i] = Label{Letter: string(rune('A' + i)), TokenID: 100 + i}
 	}
-	if _, err := NewClient(srv.URL, nil).ReadLabelLogprobs(context.Background(), nil, labels); err != nil {
+	if _, err := NewClient(srv.URL, nil, 1).ReadLabelLogprobs(context.Background(), nil, labels); err != nil {
 		t.Fatal(err)
 	}
 	assertFloat(t, got, "top_logprobs", 80)
@@ -81,7 +81,7 @@ func TestGenerateSSE(t *testing.T) {
 		_, _ = io.WriteString(w, "data: [DONE]\n")
 	}))
 	defer srv.Close()
-	got, err := NewClient(srv.URL, nil).Generate(context.Background(), nil)
+	got, err := NewClient(srv.URL, nil, 1).Generate(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestGenerateGrammar(t *testing.T) {
 		_, _ = io.WriteString(w, "data: [DONE]\n")
 	}))
 	defer srv.Close()
-	_, err := NewClient(srv.URL, nil).Generate(context.Background(), []prompt.Message{{
+	_, err := NewClient(srv.URL, nil, 1).Generate(context.Background(), []prompt.Message{{
 		Role:    "user",
 		Content: "Allowed options:\nA. north: Route north\nB. south: Route south\n",
 	}})
@@ -117,7 +117,7 @@ func TestResolveLabels(t *testing.T) {
 			_, _ = io.WriteString(w, `{"tokens":[{"id":1},{"id":2}]}`)
 		}))
 		defer srv.Close()
-		if _, err := ResolveLabels(context.Background(), NewClient(srv.URL, nil)); err == nil {
+		if _, err := ResolveLabels(context.Background(), NewClient(srv.URL, nil, 1)); err == nil {
 			t.Fatal("expected error")
 		}
 	})
@@ -129,7 +129,7 @@ func TestResolveLabels(t *testing.T) {
 			_, _ = io.WriteString(w, `{"tokens":[{"id":`+strconvItoa(id)+`}]}`)
 		}))
 		defer srv.Close()
-		labels, err := ResolveLabels(context.Background(), NewClient(srv.URL, nil))
+		labels, err := ResolveLabels(context.Background(), NewClient(srv.URL, nil, 1))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -159,7 +159,7 @@ func TestSerializeRequests(t *testing.T) {
 		_, _ = io.WriteString(w, `{"choices":[{"logprobs":{"content":[{"top_logprobs":[{"id":1,"logprob":0}]}]}}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`)
 	}))
 	defer srv.Close()
-	client := NewClient(srv.URL, nil)
+	client := NewClient(srv.URL, nil, 1)
 	labels := []Label{{Letter: "A", TokenID: 1}}
 	go func() { _, _ = client.ReadLabelLogprobs(context.Background(), nil, labels) }()
 	<-entered
@@ -174,6 +174,54 @@ func TestSerializeRequests(t *testing.T) {
 	}
 	close(release)
 	<-done
+}
+
+func TestTwoSlotOverlap(t *testing.T) {
+	var maxSeen int32
+	var inFlight int32
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			_, _ = io.WriteString(w, `{"status":"ok"}`)
+			return
+		}
+		n := atomic.AddInt32(&inFlight, 1)
+		for {
+			old := atomic.LoadInt32(&maxSeen)
+			if n <= old || atomic.CompareAndSwapInt32(&maxSeen, old, n) {
+				break
+			}
+		}
+		once.Do(func() { close(entered) })
+		<-release
+		atomic.AddInt32(&inFlight, -1)
+		_, _ = io.WriteString(w, `{"choices":[{"logprobs":{"content":[{"top_logprobs":[{"id":1,"logprob":0}]}]}}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`)
+	}))
+	defer srv.Close()
+	client := NewClient(srv.URL, nil, 2)
+	labels := []Label{{Letter: "A", TokenID: 1}}
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _ = client.ReadLabelLogprobs(context.Background(), nil, labels)
+		}()
+	}
+	<-entered
+	time.Sleep(30 * time.Millisecond)
+	healthStart := time.Now()
+	ok, err := client.Health(context.Background())
+	if err != nil || !ok || time.Since(healthStart) > 100*time.Millisecond {
+		t.Fatalf("health %v %v elapsed %s", ok, err, time.Since(healthStart))
+	}
+	close(release)
+	wg.Wait()
+	if atomic.LoadInt32(&maxSeen) != 2 {
+		t.Fatalf("max %d", maxSeen)
+	}
 }
 
 func assertFloat(t *testing.T, got map[string]any, key string, want float64) {

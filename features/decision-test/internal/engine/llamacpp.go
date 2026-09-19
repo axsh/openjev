@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"openjev/features/decision-test/internal/logger"
@@ -20,16 +19,33 @@ import (
 type Client struct {
 	baseURL string
 	http    *http.Client
-	mu      sync.Mutex
+	sem     chan struct{}
 	log     *logger.Logger
 }
 
-func NewClient(baseURL string, log *logger.Logger) *Client {
+func NewClient(baseURL string, log *logger.Logger, parallel int) *Client {
+	if parallel < 1 {
+		parallel = 1
+	}
 	return &Client{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		http:    &http.Client{Timeout: 10 * time.Minute},
+		sem:     make(chan struct{}, parallel),
 		log:     log,
 	}
+}
+
+func (c *Client) acquire(ctx context.Context) error {
+	select {
+	case c.sem <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (c *Client) release() {
+	<-c.sem
 }
 
 type directBody struct {
@@ -57,8 +73,10 @@ type genBody struct {
 }
 
 func (c *Client) ReadLabelLogprobs(ctx context.Context, messages []prompt.Message, labels []Label) (ReadResult, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	if err := c.acquire(ctx); err != nil {
+		return ReadResult{}, err
+	}
+	defer c.release()
 	start := time.Now()
 	bias := map[string]float64{}
 	for _, label := range labels {
@@ -100,8 +118,10 @@ func (c *Client) ReadLabelLogprobs(ctx context.Context, messages []prompt.Messag
 }
 
 func (c *Client) Generate(ctx context.Context, messages []prompt.Message) (GenRaw, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	if err := c.acquire(ctx); err != nil {
+		return GenRaw{}, err
+	}
+	defer c.release()
 	start := time.Now()
 	body := genBody{
 		Messages:           messages,
@@ -191,8 +211,10 @@ func (c *Client) Health(ctx context.Context) (bool, error) {
 }
 
 func (c *Client) Warmup(ctx context.Context) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	if err := c.acquire(ctx); err != nil {
+		return err
+	}
+	defer c.release()
 	body := genBody{
 		Messages:           []prompt.Message{{Role: "user", Content: "Reply with the single word ready."}},
 		MaxTokens:          1,
