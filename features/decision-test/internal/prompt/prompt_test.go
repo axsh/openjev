@@ -18,7 +18,7 @@ func accountCriteria() []domain.Criterion {
 }
 
 func TestDirectAccount(t *testing.T) {
-	msgs := Messages(accountState, "Which queue should handle this request?", accountCriteria(), domain.MethodDirect)
+	msgs := Messages(accountState, "Which queue should handle this request?", accountCriteria(), domain.MethodDirect, "choice")
 	if msgs[0].Content != systemPrompt {
 		t.Fatalf("system %q", msgs[0].Content)
 	}
@@ -32,7 +32,7 @@ func TestDirectAccount(t *testing.T) {
 }
 
 func TestGenerationInstruction(t *testing.T) {
-	msgs := Messages(accountState, "Which queue should handle this request?", accountCriteria(), domain.MethodGeneration)
+	msgs := Messages(accountState, "Which queue should handle this request?", accountCriteria(), domain.MethodGeneration, "choice")
 	if !strings.Contains(msgs[1].Content, generationInstruction) {
 		t.Fatal("generation instruction missing")
 	}
@@ -46,19 +46,45 @@ func TestGenerationInstruction(t *testing.T) {
 
 func TestNullDescription(t *testing.T) {
 	criteria := []domain.Criterion{{Key: "billing", Text: "billing"}, {Key: "other", Text: "other: Else"}}
-	msgs := Messages("s", "q", criteria, domain.MethodDirect)
+	msgs := Messages("s", "q", criteria, domain.MethodDirect, "choice")
 	if !strings.Contains(msgs[1].Content, "A. billing\nB. other: Else\n") {
 		t.Fatalf("options:\n%s", msgs[1].Content)
 	}
 }
 
 func TestObjectState(t *testing.T) {
-	msgs := Messages(`{"ticket":1}`, "q", accountCriteria()[:2], domain.MethodDirect)
+	msgs := Messages(`{"ticket":1}`, "q", accountCriteria()[:2], domain.MethodDirect, "choice")
 	if !strings.HasPrefix(msgs[1].Content, "State:\n{\"ticket\":1}\n\nQuestion:\n") {
 		t.Fatalf("state prefix:\n%s", msgs[1].Content)
 	}
 }
 
+func TestScoreSentence(t *testing.T) {
+	criteria := []domain.Criterion{{Key: "0", Text: "Calm"}, {Key: "1", Text: "Frustrated"}, {Key: "2", Text: "Very angry"}}
+	msgs := Messages("Help", "How frustrated is the customer?", criteria, domain.MethodDirect, "score")
+	if !strings.Contains(msgs[1].Content, "Levels are ordered from lowest to highest.\nAllowed options:\nA. Calm\n") {
+		t.Fatalf("%s", msgs[1].Content)
+	}
+	if strings.Contains(msgs[1].Content, "A is yes") {
+		t.Fatal("noul sentence leaked")
+	}
+	keys := ExpectedGenerationKeys(criteria)
+	if keys[0] != "A: Calm" || keys[2] != "C: Very angry" {
+		t.Fatalf("%v", keys)
+	}
+}
+
+func TestNoulSentence(t *testing.T) {
+	criteria := []domain.Criterion{{Key: "true", Text: "true"}, {Key: "false", Text: "false"}}
+	msgs := Messages("Help", "Does this convey urgency?", criteria, domain.MethodDirect, "noul")
+	if !strings.Contains(msgs[1].Content, "A is yes. B is no.\nAllowed options:\nA. true\nB. false\n") {
+		t.Fatalf("%s", msgs[1].Content)
+	}
+	keys := ExpectedGenerationKeys(criteria)
+	if keys[0] != "A: true" || keys[1] != "B: false" {
+		t.Fatalf("%v", keys)
+	}
+}
 func TestExpectedKeys(t *testing.T) {
 	keys := ExpectedGenerationKeys(accountCriteria())
 	if keys[0] != "A: account_access: Account access support" || keys[2] != "C: close: Close as resolved" {

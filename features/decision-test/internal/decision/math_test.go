@@ -5,6 +5,19 @@ import (
 	"testing"
 )
 
+func TestWeightedScore(t *testing.T) {
+	if math.Abs(WeightedScore([]float64{0.1, 0.2, 0.7})-1.6) > 1e-9 {
+		t.Fatal(WeightedScore([]float64{0.1, 0.2, 0.7}))
+	}
+	uniform := WeightedScore([]float64{1.0 / 3, 1.0 / 3, 1.0 / 3})
+	if math.Abs(uniform-1) > 1e-9 {
+		t.Fatal(uniform)
+	}
+	if math.Abs(WeightedScore([]float64{0, 0, 1})-2) > 1e-9 {
+		t.Fatal("point mass")
+	}
+}
+
 func TestSoftmaxUniform(t *testing.T) {
 	got := Softmax([]float64{0, 0})
 	if math.Abs(got[0]-0.5) > 1e-12 || math.Abs(got[1]-0.5) > 1e-12 {

@@ -2,6 +2,7 @@ package decision
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"strings"
@@ -109,6 +110,22 @@ func TestServiceMissingLogit(t *testing.T) {
 	_, err := svc.Run(context.Background(), domain.Request{Model: "m", State: mustState(t, `"hello"`), Questions: []domain.Question{testQuestion()}, Method: domain.MethodDirect})
 	if !errors.Is(err, ErrEngine) || !strings.Contains(err.Error(), "missing option logit for A") {
 		t.Fatal(err)
+	}
+}
+
+func TestApplyNoulOmitsConfidence(t *testing.T) {
+	var ans domain.Answer
+	ans.Type = "noul"
+	applyDirect(&ans, domain.Question{Type: "noul", Criteria: []domain.Criterion{{Key: "true", Text: "true"}, {Key: "false", Text: "false"}}}, []float64{0.95, 0.05})
+	if ans.Noul == nil || *ans.Noul != 0.95 || ans.Confidence != nil || ans.Probabilities != nil || ans.Choice != "" {
+		t.Fatalf("%+v", ans)
+	}
+	raw, err := json.Marshal(ans)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "confidence") || strings.Contains(string(raw), "probabilities") || strings.Contains(string(raw), "choice") {
+		t.Fatalf("%s", raw)
 	}
 }
 

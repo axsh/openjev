@@ -115,7 +115,7 @@ func TestRejectsBeforeEngine(t *testing.T) {
 	cases := []string{
 		`{"state":"hello","questions":{"q":{"type":"choice","instructions":"Pick","criteria":{"only":"One"}}}}`,
 		criteriaN(21),
-		`{"state":"hello","questions":{"q":{"type":"score","instructions":"Pick","criteria":{"a":"A","b":"B"}}}}`,
+		`{"state":"hello","questions":{"q":{"type":"rank","instructions":"Pick","criteria":{"a":"A","b":"B"}}}}`,
 		`{"state":"","questions":{"q":{"type":"choice","instructions":"Pick","criteria":{"a":"A","b":"B"}}}}`,
 	}
 	for _, body := range cases {
@@ -164,6 +164,66 @@ func TestHealthStatus(t *testing.T) {
 	down := api.Get("/health")
 	if down.Code != 503 || !strings.Contains(down.Body.String(), `"ready":false`) {
 		t.Fatalf("down status %d body %s", down.Code, down.Body.String())
+	}
+}
+
+func TestScoreAndNoulDirect(t *testing.T) {
+	eng := &countingEngine{}
+	_, api := humatest.New(t)
+	Register(api, newService(eng), func(context.Context) domain.Health { return domain.Health{Ready: true} })
+	raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "score.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp := api.Post("/v1/systemone", "Content-Type: application/json", strings.NewReader(string(raw)))
+	if resp.Code != 200 {
+		t.Fatalf("status %d %s", resp.Code, resp.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(resp.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	ans := body["answers"].(map[string]any)["frustration"].(map[string]any)
+	if _, ok := ans["choice"]; ok {
+		t.Fatal("choice present")
+	}
+	probs := ans["probabilities"].(map[string]any)
+	score := ans["score"].(float64)
+	sum := 0.0
+	weighted := 0.0
+	for _, key := range []string{"0", "1", "2"} {
+		value := probs[key].(float64)
+		sum += value
+		index, _ := json.Number(key).Float64()
+		weighted += index * value
+	}
+	if math.Abs(sum-1) > 1e-6 || math.Abs(score-weighted) > 1e-6 {
+		t.Fatalf("score %v weighted %v sum %v", score, weighted, sum)
+	}
+	noulRaw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "noul.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	nresp := api.Post("/v1/systemone", "Content-Type: application/json", strings.NewReader(string(noulRaw)))
+	if nresp.Code != 200 || strings.Contains(nresp.Body.String(), "confidence") || strings.Contains(nresp.Body.String(), `"choice"`) {
+		t.Fatalf("noul %d %s", nresp.Code, nresp.Body.String())
+	}
+}
+
+func TestRejectFixtures(t *testing.T) {
+	names := []string{"score-one.json", "score-eleven.json", "score-object.json", "score-empty.json", "noul-true-only.json", "noul-extra-key.json", "type-rank.json"}
+	for _, name := range names {
+		raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		eng := &countingEngine{}
+		_, api := humatest.New(t)
+		Register(api, newService(eng), func(context.Context) domain.Health { return domain.Health{Ready: true} })
+		resp := api.Post("/v1/systemone", "Content-Type: application/json", strings.NewReader(string(raw)))
+		if resp.Code != 422 || eng.calls != 0 {
+			t.Fatalf("%s status %d calls %d", name, resp.Code, eng.calls)
+		}
 	}
 }
 

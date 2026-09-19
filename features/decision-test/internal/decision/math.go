@@ -51,6 +51,14 @@ func Confidence(probs []float64) float64 {
 	return 1 - entropy/math.Log(float64(n))
 }
 
+func WeightedScore(probs []float64) float64 {
+	score := 0.0
+	for i, p := range probs {
+		score += float64(i) * p
+	}
+	return score
+}
+
 func ArgMax(probs []float64) int {
 	if len(probs) == 0 {
 		return -1

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -49,25 +50,11 @@ func Validate(raw []byte, configuredModelID string) (Request, error) {
 	}
 	for qi := range req.Questions {
 		q := &req.Questions[qi]
-		if q.Type != "choice" {
-			return Request{}, fmt.Errorf("question type %q is not supported", q.Type)
-		}
 		if strings.TrimSpace(q.Instructions) == "" {
 			return Request{}, fmt.Errorf("instructions must not be empty")
 		}
-		if len(q.Criteria) < 2 || len(q.Criteria) > 20 {
-			return Request{}, fmt.Errorf("choice requires 2 to 20 options")
-		}
-		for ci := range q.Criteria {
-			c := &q.Criteria[ci]
-			if c.Key == "" {
-				return Request{}, fmt.Errorf("empty key")
-			}
-			if c.Description == nil {
-				c.Text = c.Key
-			} else {
-				c.Text = c.Key + ": " + *c.Description
-			}
+		if err := interpretQuestion(q); err != nil {
+			return Request{}, err
 		}
 	}
 	if req.Model == "" {
@@ -92,6 +79,11 @@ func ApplyMethod(raw []byte, method string) ([]byte, error) {
 		return nil, err
 	}
 	req.Method = Method(method)
+	for i := range req.Questions {
+		if err := interpretQuestion(&req.Questions[i]); err != nil {
+			return nil, err
+		}
+	}
 	return marshalRequest(req)
 }
 
@@ -191,14 +183,15 @@ func parseQuestion(dec *json.Decoder) (Question, error) {
 			}
 		case "instructions":
 			if err := dec.Decode(&q.Instructions); err != nil {
-				return Question{}, err
+				return Question{}, fmt.Errorf("instructions must be a string")
 			}
 		case "criteria":
-			criteria, err := parseCriteria(dec)
-			if err != nil {
+			var raw json.RawMessage
+			if err := dec.Decode(&raw); err != nil {
 				return Question{}, err
 			}
-			q.Criteria = criteria
+			q.criteriaRaw = raw
+			q.sawCriteria = true
 		default:
 			var skip json.RawMessage
 			if err := dec.Decode(&skip); err != nil {
@@ -210,6 +203,139 @@ func parseQuestion(dec *json.Decoder) (Question, error) {
 		return Question{}, err
 	}
 	return q, nil
+}
+
+func interpretQuestion(q *Question) error {
+	switch q.Type {
+	case "choice":
+		return interpretChoice(q)
+	case "score":
+		return interpretScore(q)
+	case "noul":
+		return interpretNoul(q)
+	default:
+		return fmt.Errorf("question type %q is not supported", q.Type)
+	}
+}
+
+func interpretChoice(q *Question) error {
+	if !q.sawCriteria {
+		return fmt.Errorf("choice requires 2 to 20 options")
+	}
+	dec := json.NewDecoder(bytes.NewReader(q.criteriaRaw))
+	criteria, err := parseCriteria(dec)
+	if err != nil {
+		return err
+	}
+	if len(criteria) < 2 || len(criteria) > 20 {
+		return fmt.Errorf("choice requires 2 to 20 options")
+	}
+	for i := range criteria {
+		if criteria[i].Description == nil {
+			criteria[i].Text = criteria[i].Key
+		} else {
+			criteria[i].Text = criteria[i].Key + ": " + *criteria[i].Description
+		}
+	}
+	q.Criteria = criteria
+	return nil
+}
+
+func interpretScore(q *Question) error {
+	if !q.sawCriteria {
+		return fmt.Errorf("score requires 2 to 10 levels")
+	}
+	dec := json.NewDecoder(bytes.NewReader(q.criteriaRaw))
+	tok, err := dec.Token()
+	if err != nil {
+		return fmt.Errorf("score criteria must be an array")
+	}
+	delim, ok := tok.(json.Delim)
+	if !ok || delim != '[' {
+		return fmt.Errorf("score criteria must be an array")
+	}
+	var levels []string
+	seen := map[string]struct{}{}
+	for dec.More() {
+		var text string
+		if err := dec.Decode(&text); err != nil {
+			return fmt.Errorf("score criteria must be an array")
+		}
+		if strings.TrimSpace(text) == "" {
+			return fmt.Errorf("score level must not be blank")
+		}
+		if _, ok := seen[text]; ok {
+			return fmt.Errorf("duplicate score level")
+		}
+		seen[text] = struct{}{}
+		levels = append(levels, text)
+	}
+	if _, err := expectDelim(dec, ']'); err != nil {
+		return fmt.Errorf("score criteria must be an array")
+	}
+	if len(levels) < 2 || len(levels) > 10 {
+		return fmt.Errorf("score requires 2 to 10 levels")
+	}
+	q.Criteria = make([]Criterion, len(levels))
+	for i, text := range levels {
+		q.Criteria[i] = Criterion{Key: strconv.Itoa(i), Text: text}
+	}
+	return nil
+}
+
+func interpretNoul(q *Question) error {
+	if !q.sawCriteria || bytes.Equal(bytes.TrimSpace(q.criteriaRaw), []byte("null")) {
+		q.Criteria = []Criterion{{Key: "true", Text: "true"}, {Key: "false", Text: "false"}}
+		return nil
+	}
+	dec := json.NewDecoder(bytes.NewReader(q.criteriaRaw))
+	tok, err := dec.Token()
+	if err != nil {
+		return fmt.Errorf("noul criteria must be an object")
+	}
+	delim, ok := tok.(json.Delim)
+	if !ok || delim != '{' {
+		return fmt.Errorf("noul criteria must be an object")
+	}
+	var trueText, falseText string
+	var sawTrue, sawFalse bool
+	for dec.More() {
+		key, err := objectKey(dec)
+		if err != nil {
+			return err
+		}
+		var text string
+		if err := dec.Decode(&text); err != nil {
+			return fmt.Errorf("noul criteria must be an object")
+		}
+		switch key {
+		case "true":
+			if sawTrue {
+				return fmt.Errorf("duplicate key true")
+			}
+			sawTrue = true
+			trueText = text
+		case "false":
+			if sawFalse {
+				return fmt.Errorf("duplicate key false")
+			}
+			sawFalse = true
+			falseText = text
+		default:
+			return fmt.Errorf("noul criteria has unexpected key")
+		}
+		if strings.TrimSpace(text) == "" {
+			return fmt.Errorf("noul criteria must not be blank")
+		}
+	}
+	if _, err := expectDelim(dec, '}'); err != nil {
+		return err
+	}
+	if !sawTrue || !sawFalse {
+		return fmt.Errorf("noul criteria requires true and false")
+	}
+	q.Criteria = []Criterion{{Key: "true", Text: trueText}, {Key: "false", Text: falseText}}
+	return nil
 }
 
 func parseCriteria(dec *json.Decoder) ([]Criterion, error) {
@@ -341,20 +467,40 @@ func marshalRequest(req Request) ([]byte, error) {
 		writeJSON(&buf, q.Type)
 		buf.WriteString(`,"instructions":`)
 		writeJSON(&buf, q.Instructions)
-		buf.WriteString(`,"criteria":{`)
-		for j, c := range q.Criteria {
-			if j > 0 {
-				buf.WriteByte(',')
+		buf.WriteString(`,"criteria":`)
+		switch q.Type {
+		case "score":
+			buf.WriteByte('[')
+			for j, c := range q.Criteria {
+				if j > 0 {
+					buf.WriteByte(',')
+				}
+				writeJSON(&buf, c.Text)
 			}
-			writeJSON(&buf, c.Key)
-			buf.WriteByte(':')
-			if c.Description == nil {
-				buf.WriteString("null")
-			} else {
-				writeJSON(&buf, *c.Description)
+			buf.WriteByte(']')
+		default:
+			buf.WriteByte('{')
+			for j, c := range q.Criteria {
+				if j > 0 {
+					buf.WriteByte(',')
+				}
+				key := c.Key
+				if q.Type == "noul" && key == "" {
+					key = c.Text
+				}
+				writeJSON(&buf, key)
+				buf.WriteByte(':')
+				if q.Type == "noul" {
+					writeJSON(&buf, c.Text)
+				} else if c.Description == nil {
+					buf.WriteString("null")
+				} else {
+					writeJSON(&buf, *c.Description)
+				}
 			}
+			buf.WriteByte('}')
 		}
-		buf.WriteString("}}")
+		buf.WriteByte('}')
 	}
 	buf.WriteByte('}')
 	if req.Method != "" {

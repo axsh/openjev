@@ -74,8 +74,7 @@ func TestValidate(t *testing.T) {
 				}
 			},
 		},
-		{name: "type_score", raw: []byte(`{"state":"hello","questions":{"q":{"type":"score","instructions":"Pick","criteria":{"a":"A","b":"B"}}}}`), wantErr: "not supported"},
-		{name: "type_noul", raw: []byte(`{"state":"hello","questions":{"q":{"type":"noul","instructions":"Pick","criteria":{"a":"A","b":"B"}}}}`), wantErr: "not supported"},
+		{name: "type_rank", raw: []byte(`{"state":"hello","questions":{"q":{"type":"rank","instructions":"Pick","criteria":{"a":"A","b":"B"}}}}`), wantErr: "not supported"},
 		{name: "unknown_model", raw: []byte(`{"model":"other","state":"hello","questions":{"q":{"type":"choice","instructions":"Pick","criteria":{"a":"A","b":"B"}}}}`), wantErr: "model"},
 		{
 			name: "omit_model",
@@ -124,6 +123,80 @@ func TestValidate(t *testing.T) {
 				tt.check(t, req)
 			}
 		})
+	}
+}
+
+func TestScoreAndNoul(t *testing.T) {
+	score, err := os.ReadFile(filepath.Join("..", "..", "testdata", "score.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := Validate(score, "minicpm5-2b-q4_k_m")
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := req.Questions[0]
+	if q.Type != "score" || q.Criteria[0].Key != "0" || q.Criteria[0].Text != "Calm" || q.Criteria[2].Text != "Very angry" {
+		t.Fatalf("%+v", q.Criteria)
+	}
+	beforeType := []byte(`{"state":"hello","questions":{"frustration":{"criteria":["Calm","Angry"],"type":"score","instructions":"How?"}}}`)
+	req, err = Validate(beforeType, "minicpm5-2b-q4_k_m")
+	if err != nil || req.Questions[0].Criteria[1].Text != "Angry" {
+		t.Fatal(err)
+	}
+	noul, err := os.ReadFile(filepath.Join("..", "..", "testdata", "noul.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err = Validate(noul, "minicpm5-2b-q4_k_m")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.Questions[0].Criteria[0].Key != "true" || req.Questions[0].Criteria[1].Key != "false" {
+		t.Fatalf("order %+v", req.Questions[0].Criteria)
+	}
+	if req.Questions[0].Criteria[0].Text != "Explicitly time-sensitive" {
+		t.Fatalf("text %q", req.Questions[0].Criteria[0].Text)
+	}
+	omit, err := os.ReadFile(filepath.Join("..", "..", "testdata", "noul-omit.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err = Validate(omit, "minicpm5-2b-q4_k_m")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.Questions[0].Criteria[0].Text != "true" || req.Questions[0].Criteria[1].Text != "false" {
+		t.Fatalf("%+v", req.Questions[0].Criteria)
+	}
+	nullCrit := []byte(`{"state":"hello","questions":{"q":{"type":"noul","instructions":"Yes?","criteria":null}}}`)
+	req, err = Validate(nullCrit, "minicpm5-2b-q4_k_m")
+	if err != nil || req.Questions[0].Criteria[0].Text != "true" {
+		t.Fatal(err)
+	}
+	rejects := []string{"score-one.json", "score-eleven.json", "score-object.json", "score-empty.json", "noul-true-only.json", "noul-extra-key.json", "type-rank.json"}
+	for _, name := range rejects {
+		raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Validate(raw, "minicpm5-2b-q4_k_m"); err == nil {
+			t.Fatalf("%s accepted", name)
+		}
+	}
+	rewritten, err := ApplyMethod(score, "generation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(rewritten), `"criteria":["Calm","Frustrated","Very angry"]`) {
+		t.Fatalf("score rewrite %s", rewritten)
+	}
+	rewritten, err = ApplyMethod(noul, "both")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(rewritten), `"true":"Explicitly time-sensitive"`) {
+		t.Fatalf("noul rewrite %s", rewritten)
 	}
 }
 

@@ -80,6 +80,29 @@ func TestDecideStatus(t *testing.T) {
 	}
 }
 
+func TestDecideScoreAndNoul(t *testing.T) {
+	const body = `{"answers":{"frustration":{"type":"score","score":1.04,"confidence":0.94,"probabilities":{"0":0,"1":0.96,"2":0.04},"timings":{"direct_ms":95.2}},"is_urgent":{"type":"noul","noul":0.95,"timings":{"direct_ms":12}}}}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, body)
+	}))
+	defer srv.Close()
+	path := writeInput(t, `{"state":"hello","questions":{"q":{"type":"choice","instructions":"Which?","criteria":{"a":"A","b":"B"}}}}`)
+	var stdout, stderr bytes.Buffer
+	if err := Decide(context.Background(), Options{Input: path, Server: srv.URL}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	text := stdout.String()
+	for _, part := range []string{"score: 1.040", "confidence: 0.940", "noul: 0.950"} {
+		if !strings.Contains(text, part) {
+			t.Fatalf("missing %s in %s", part, text)
+		}
+	}
+	urgent := text[strings.Index(text, "is_urgent"):]
+	if strings.Contains(urgent, "confidence") {
+		t.Fatalf("noul confidence leaked: %s", text)
+	}
+}
+
 func writeInput(t *testing.T, body string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "in.json")

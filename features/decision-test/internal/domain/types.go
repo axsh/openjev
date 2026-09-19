@@ -26,6 +26,8 @@ type Question struct {
 	Type         string
 	Instructions string
 	Criteria     []Criterion
+	criteriaRaw  json.RawMessage
+	sawCriteria  bool
 }
 
 type Criterion struct {
@@ -43,7 +45,10 @@ type Response struct {
 
 type Answer struct {
 	Type          string             `json:"type"`
-	Choice        string             `json:"choice"`
+	Choice        string             `json:"choice,omitempty"`
+	Score         *float64           `json:"score,omitempty"`
+	Noul          *float64           `json:"noul,omitempty"`
+	Legend        map[string]string  `json:"legend,omitempty"`
 	Probabilities map[string]float64 `json:"probabilities,omitempty"`
 	Confidence    *float64           `json:"confidence,omitempty" doc:"1 - H(p) / ln(n). H is the natural-log entropy of the option distribution. 1 when peaked, 0 when uniform. Not Jev's unpublished definition."`
 	Method        Method             `json:"method"`
@@ -52,7 +57,10 @@ type Answer struct {
 }
 
 type Generation struct {
-	Choice          string             `json:"choice"`
+	Choice          string             `json:"-"`
+	EmitChoice      bool               `json:"-"`
+	Score           *float64           `json:"score,omitempty"`
+	Noul            *float64           `json:"noul,omitempty"`
 	Probabilities   map[string]float64 `json:"probabilities,omitempty"`
 	Valid           bool               `json:"valid"`
 	ValidationError string             `json:"validation_error"`
@@ -60,6 +68,37 @@ type Generation struct {
 	TTFTMs          float64            `json:"ttft_ms"`
 	TotalMs         float64            `json:"total_ms"`
 	OutputTokens    int                `json:"output_tokens"`
+}
+
+func (g Generation) MarshalJSON() ([]byte, error) {
+	type wire struct {
+		Choice          *string            `json:"choice,omitempty"`
+		Score           *float64           `json:"score,omitempty"`
+		Noul            *float64           `json:"noul,omitempty"`
+		Probabilities   map[string]float64 `json:"probabilities,omitempty"`
+		Valid           bool               `json:"valid"`
+		ValidationError string             `json:"validation_error"`
+		GeneratedText   string             `json:"generated_text"`
+		TTFTMs          float64            `json:"ttft_ms"`
+		TotalMs         float64            `json:"total_ms"`
+		OutputTokens    int                `json:"output_tokens"`
+	}
+	out := wire{
+		Score:           g.Score,
+		Noul:            g.Noul,
+		Probabilities:   g.Probabilities,
+		Valid:           g.Valid,
+		ValidationError: g.ValidationError,
+		GeneratedText:   g.GeneratedText,
+		TTFTMs:          g.TTFTMs,
+		TotalMs:         g.TotalMs,
+		OutputTokens:    g.OutputTokens,
+	}
+	if g.EmitChoice {
+		choice := g.Choice
+		out.Choice = &choice
+	}
+	return json.Marshal(out)
 }
 
 type Timings struct {

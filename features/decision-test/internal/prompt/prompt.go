@@ -19,7 +19,7 @@ type Message struct {
 	Content string `json:"content"`
 }
 
-func Messages(state string, instructions string, criteria []domain.Criterion, mode domain.Method) []Message {
+func Messages(state string, instructions string, criteria []domain.Criterion, mode domain.Method, questionType string) []Message {
 	labels := make([]string, len(criteria))
 	lines := make([]string, len(criteria))
 	for i, item := range criteria {
@@ -30,7 +30,14 @@ func Messages(state string, instructions string, criteria []domain.Criterion, mo
 	if mode == domain.MethodDirect {
 		instruction = "Reply with exactly one option letter from: " + strings.Join(labels, ", ") + "."
 	}
-	user := "State:\n" + state + "\n\nQuestion:\n" + instructions + "\n\nAllowed options:\n" + strings.Join(lines, "\n") + "\n\n" + instruction
+	prefix := ""
+	switch questionType {
+	case "score":
+		prefix = "Levels are ordered from lowest to highest.\n"
+	case "noul":
+		prefix = "A is yes. B is no.\n"
+	}
+	user := "State:\n" + state + "\n\nQuestion:\n" + instructions + "\n\n" + prefix + "Allowed options:\n" + strings.Join(lines, "\n") + "\n\n" + instruction
 	return []Message{
 		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: user},

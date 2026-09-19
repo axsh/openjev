@@ -60,7 +60,10 @@ func Decide(ctx context.Context, opt Options, stdout, stderr io.Writer) error {
 func writeHuman(stdout io.Writer, raw []byte) error {
 	var body struct {
 		Answers map[string]struct {
+			Type          string             `json:"type"`
 			Choice        string             `json:"choice"`
+			Score         *float64           `json:"score"`
+			Noul          *float64           `json:"noul"`
 			Confidence    *float64           `json:"confidence"`
 			Probabilities map[string]float64 `json:"probabilities"`
 			Timings       *struct {
@@ -81,17 +84,33 @@ func writeHuman(stdout io.Writer, raw []byte) error {
 	for _, id := range ids {
 		ans := body.Answers[id]
 		fmt.Fprintf(stdout, "%s\n", id)
-		fmt.Fprintf(stdout, "  choice: %s\n", ans.Choice)
-		if ans.Confidence != nil {
-			fmt.Fprintf(stdout, "  confidence: %.3f\n", *ans.Confidence)
+		switch ans.Type {
+		case "score":
+			if ans.Score != nil {
+				fmt.Fprintf(stdout, "  score: %.3f\n", *ans.Score)
+			}
+			if ans.Confidence != nil {
+				fmt.Fprintf(stdout, "  confidence: %.3f\n", *ans.Confidence)
+			}
+		case "noul":
+			if ans.Noul != nil {
+				fmt.Fprintf(stdout, "  noul: %.3f\n", *ans.Noul)
+			}
+		default:
+			fmt.Fprintf(stdout, "  choice: %s\n", ans.Choice)
+			if ans.Confidence != nil {
+				fmt.Fprintf(stdout, "  confidence: %.3f\n", *ans.Confidence)
+			}
 		}
-		keys := make([]string, 0, len(ans.Probabilities))
-		for key := range ans.Probabilities {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		for _, key := range keys {
-			fmt.Fprintf(stdout, "  %s  %.3f\n", key, ans.Probabilities[key])
+		if ans.Type != "noul" {
+			keys := make([]string, 0, len(ans.Probabilities))
+			for key := range ans.Probabilities {
+				keys = append(keys, key)
+			}
+			sort.Strings(keys)
+			for _, key := range keys {
+				fmt.Fprintf(stdout, "  %s  %.3f\n", key, ans.Probabilities[key])
+			}
 		}
 		if ans.Timings == nil {
 			continue

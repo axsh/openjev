@@ -52,11 +52,11 @@ func (s *Service) one(ctx context.Context, state string, question domain.Questio
 	for i, label := range engLabels {
 		decLabels[i] = Label{Letter: label.Letter, TokenID: label.TokenID}
 	}
-	answer := domain.Answer{Type: "choice", Method: method}
+	answer := domain.Answer{Type: question.Type, Method: method}
 	var used usage
 	var directMs float64
 	if method == domain.MethodDirect || method == domain.MethodBoth {
-		read, err := s.Engine.ReadLabelLogprobs(ctx, prompt.Messages(state, question.Instructions, question.Criteria, domain.MethodDirect), engLabels)
+		read, err := s.Engine.ReadLabelLogprobs(ctx, prompt.Messages(state, question.Instructions, question.Criteria, domain.MethodDirect, question.Type), engLabels)
 		if err != nil {
 			return domain.Answer{}, usage{}, fmt.Errorf("%w: %v", ErrEngine, err)
 		}
@@ -68,26 +68,18 @@ func (s *Service) one(ctx context.Context, state string, question domain.Questio
 		if err != nil {
 			return domain.Answer{}, usage{}, fmt.Errorf("%w: %v", ErrEngine, err)
 		}
-		probs := Softmax(logits)
-		index := ArgMax(probs)
-		confidence := Confidence(probs)
-		answer.Choice = question.Criteria[index].Key
-		answer.Probabilities = map[string]float64{}
-		for i, item := range question.Criteria {
-			answer.Probabilities[item.Key] = probs[i]
-		}
-		answer.Confidence = &confidence
+		applyDirect(&answer, question, Softmax(logits))
 		directMs = read.ElapsedMs
 		used.in += read.PromptTokens
 		used.out += read.CompletionTokens
-		s.Log.Debug("direct completed", "question_id", question.ID)
+		s.Log.Debug("direct completed", "question_id", question.ID, "question_type", question.Type)
 		if method == domain.MethodDirect {
 			answer.Timings = &domain.Timings{DirectMs: directMs}
 		}
 	}
 	if method == domain.MethodGeneration || method == domain.MethodBoth {
-		s.Log.Debug("generation started", "question_id", question.ID)
-		raw, err := s.Engine.Generate(ctx, prompt.Messages(state, question.Instructions, question.Criteria, domain.MethodGeneration))
+		s.Log.Debug("generation started", "question_id", question.ID, "question_type", question.Type)
+		raw, err := s.Engine.Generate(ctx, prompt.Messages(state, question.Instructions, question.Criteria, domain.MethodGeneration, question.Type))
 		if err != nil {
 			return domain.Answer{}, usage{}, fmt.Errorf("%w: %v", ErrEngine, err)
 		}
@@ -99,21 +91,15 @@ func (s *Service) one(ctx context.Context, state string, question domain.Questio
 			TTFTMs:          raw.TTFTMs,
 			TotalMs:         raw.TotalMs,
 			OutputTokens:    raw.CompletionTokens,
+			EmitChoice:      question.Type == "choice",
 		}
 		if checked.Valid {
-			generated.Choice = checked.ChoiceKey
-			generated.Probabilities = checked.Probabilities
+			applyGeneration(generated, &answer, question, checked, method)
 		}
 		answer.Generation = generated
 		used.in += raw.PromptTokens
 		used.out += raw.CompletionTokens
 		if method == domain.MethodGeneration {
-			if checked.Valid {
-				answer.Choice = checked.ChoiceKey
-				answer.Probabilities = checked.Probabilities
-				confidence := Confidence(ordered(checked.Probabilities, question.Criteria))
-				answer.Confidence = &confidence
-			}
 			answer.Timings = &domain.Timings{GenerationMs: raw.TotalMs}
 		} else {
 			ratio := raw.TotalMs / directMs
@@ -121,6 +107,66 @@ func (s *Service) one(ctx context.Context, state string, question domain.Questio
 		}
 	}
 	return answer, used, nil
+}
+
+func applyDirect(answer *domain.Answer, question domain.Question, probs []float64) {
+	switch question.Type {
+	case "score":
+		score := WeightedScore(probs)
+		confidence := Confidence(probs)
+		answer.Score = &score
+		answer.Confidence = &confidence
+		answer.Legend = map[string]string{}
+		answer.Probabilities = map[string]float64{}
+		for i, item := range question.Criteria {
+			answer.Legend[item.Key] = item.Text
+			answer.Probabilities[item.Key] = probs[i]
+		}
+	case "noul":
+		noul := probs[0]
+		answer.Noul = &noul
+	default:
+		index := ArgMax(probs)
+		confidence := Confidence(probs)
+		answer.Choice = question.Criteria[index].Key
+		answer.Probabilities = map[string]float64{}
+		for i, item := range question.Criteria {
+			answer.Probabilities[item.Key] = probs[i]
+		}
+		answer.Confidence = &confidence
+	}
+}
+
+func applyGeneration(generated *domain.Generation, answer *domain.Answer, question domain.Question, checked GenResult, method domain.Method) {
+	probs := ordered(checked.Probabilities, question.Criteria)
+	switch question.Type {
+	case "score":
+		score := WeightedScore(probs)
+		generated.Score = &score
+		generated.Probabilities = checked.Probabilities
+		if method == domain.MethodGeneration {
+			confidence := Confidence(probs)
+			answer.Score = &score
+			answer.Probabilities = checked.Probabilities
+			answer.Confidence = &confidence
+		}
+	case "noul":
+		noul := probs[0]
+		generated.Noul = &noul
+		generated.Probabilities = checked.Probabilities
+		if method == domain.MethodGeneration {
+			answer.Noul = &noul
+		}
+	default:
+		generated.Choice = checked.ChoiceKey
+		generated.Probabilities = checked.Probabilities
+		if method == domain.MethodGeneration {
+			confidence := Confidence(probs)
+			answer.Choice = checked.ChoiceKey
+			answer.Probabilities = checked.Probabilities
+			answer.Confidence = &confidence
+		}
+	}
 }
 
 func ordered(probs map[string]float64, criteria []domain.Criterion) []float64 {

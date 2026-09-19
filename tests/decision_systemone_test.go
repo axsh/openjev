@@ -178,6 +178,227 @@ func TestDecisionSystemOne_BothOrder(t *testing.T) {
 	}
 }
 
+func TestDecisionSystemOne_Score(t *testing.T) {
+	root := repoRoot(t)
+	if err := getOK(llamaHealth(t, root)); err != nil {
+		t.Fatal(err)
+	}
+	base := startServer(t, root, 18195, "")
+	raw := readRepo(t, root, filepath.Join("features", "decision-test", "testdata", "score.json"))
+	body := postJSON(t, base+"/v1/systemone", raw)
+	ans := answer(t, body, "frustration")
+	assertScoreShape(t, ans, false)
+	if body["usage"].(map[string]any)["output_tokens"] != float64(1) {
+		t.Fatalf("output_tokens %#v", body["usage"])
+	}
+	genBody := postJSON(t, base+"/v1/systemone", replaceMethod(raw, "generation"))
+	genAns := answer(t, genBody, "frustration")
+	gen := genAns["generation"].(map[string]any)
+	if gen["valid"] != true {
+		t.Fatalf("generation %#v", gen)
+	}
+	keys := objectKeys(t, gen["generated_text"].(string))
+	want := []string{"A: Calm", "B: Frustrated", "C: Very angry"}
+	if strings.Join(keys, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("keys %#v", keys)
+	}
+	if _, ok := gen["choice"]; ok {
+		t.Fatal("generation choice present")
+	}
+	probs := floatMap(t, gen["probabilities"])
+	weighted := 0.0
+	sum := 0.0
+	for i, key := range []string{"0", "1", "2"} {
+		sum += probs[key]
+		weighted += float64(i) * probs[key]
+	}
+	if math.Abs(sum-1) > 0.02 {
+		t.Fatalf("sum %v", sum)
+	}
+	if math.Abs(genAns["score"].(float64)-weighted) > 1e-6 || math.Abs(gen["score"].(float64)-weighted) > 1e-6 {
+		t.Fatalf("score %#v gen %#v weighted %v", genAns["score"], gen["score"], weighted)
+	}
+	ttft := gen["ttft_ms"].(float64)
+	total := gen["total_ms"].(float64)
+	if ttft <= 0 || total <= 0 || ttft > total {
+		t.Fatalf("ttft %v total %v", ttft, total)
+	}
+}
+
+func TestDecisionSystemOne_Noul(t *testing.T) {
+	root := repoRoot(t)
+	if err := getOK(llamaHealth(t, root)); err != nil {
+		t.Fatal(err)
+	}
+	base := startServer(t, root, 18196, "")
+	raw := readRepo(t, root, filepath.Join("features", "decision-test", "testdata", "noul.json"))
+	body := postJSON(t, base+"/v1/systemone", raw)
+	ans := answer(t, body, "is_urgent")
+	assertNoulShape(t, ans)
+	if body["usage"].(map[string]any)["output_tokens"] != float64(1) {
+		t.Fatalf("output_tokens %#v", body["usage"])
+	}
+}
+
+func TestDecisionSystemOne_NoulDefaultCriteria(t *testing.T) {
+	root := repoRoot(t)
+	if err := getOK(llamaHealth(t, root)); err != nil {
+		t.Fatal(err)
+	}
+	base := startServer(t, root, 18197, "")
+	raw := readRepo(t, root, filepath.Join("features", "decision-test", "testdata", "noul-omit.json"))
+	body := postJSON(t, base+"/v1/systemone", raw)
+	noul := answer(t, body, "is_urgent")["noul"].(float64)
+	if noul < 0 || noul > 1 {
+		t.Fatalf("noul %v", noul)
+	}
+	genBody := postJSON(t, base+"/v1/systemone", replaceMethod(raw, "generation"))
+	ans := answer(t, genBody, "is_urgent")
+	gen := ans["generation"].(map[string]any)
+	if gen["valid"] != true {
+		t.Fatalf("%#v", gen)
+	}
+	keys := objectKeys(t, gen["generated_text"].(string))
+	if strings.Join(keys, "\n") != "A: true\nB: false" {
+		t.Fatalf("keys %#v", keys)
+	}
+	probs := floatMap(t, gen["probabilities"])
+	if math.Abs(probs["true"]+probs["false"]-1) > 0.02 {
+		t.Fatalf("sum %v", probs)
+	}
+	if math.Abs(ans["noul"].(float64)-probs["true"]) > 1e-6 {
+		t.Fatalf("noul %v true %v", ans["noul"], probs["true"])
+	}
+}
+
+func TestDecisionSystemOne_Mixed(t *testing.T) {
+	root := repoRoot(t)
+	if err := getOK(llamaHealth(t, root)); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(t.TempDir(), "decision.log")
+	base := startServer(t, root, 18198, logPath)
+	raw := readRepo(t, root, filepath.Join("features", "decision-test", "testdata", "mixed.json"))
+	body := postJSON(t, base+"/v1/systemone", raw)
+	queue := answer(t, body, "queue")
+	choice, _ := queue["choice"].(string)
+	if choice != "account_access" && choice != "billing" && choice != "close" {
+		t.Fatalf("choice %#v", queue["choice"])
+	}
+	if queue["generation"] == nil {
+		t.Fatal("missing generation")
+	}
+	sum := 0.0
+	for _, value := range floatMap(t, queue["probabilities"]) {
+		sum += value
+	}
+	if math.Abs(sum-1) > 1e-6 {
+		t.Fatalf("choice sum %v", sum)
+	}
+	assertScoreShape(t, answer(t, body, "frustration"), true)
+	assertNoulShape(t, answer(t, body, "is_urgent"))
+	for _, id := range []string{"queue", "frustration", "is_urgent"} {
+		timings := answer(t, body, id)["timings"].(map[string]any)
+		direct := timings["direct_ms"].(float64)
+		generation := timings["generation_ms"].(float64)
+		ratio := timings["ratio"].(float64)
+		expect := generation / direct
+		if expect == 0 || math.Abs(ratio-expect)/math.Abs(expect) > 1e-6 {
+			t.Fatalf("%s ratio %v expect %v", id, ratio, expect)
+		}
+	}
+	if body["usage"].(map[string]any)["output_tokens"].(float64) < 3 {
+		t.Fatalf("usage %#v", body["usage"])
+	}
+	logged, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(logged)
+	order := []string{"queue", "frustration", "is_urgent"}
+	types := []string{"choice", "score", "noul"}
+	cursor := 0
+	for i, id := range order {
+		directAt := strings.Index(text[cursor:], "direct completed")
+		generationAt := strings.Index(text[cursor:], "generation started")
+		if directAt < 0 || generationAt < 0 || directAt > generationAt {
+			t.Fatalf("log order:\n%s", text)
+		}
+		chunk := text[cursor+directAt : cursor+generationAt]
+		if !strings.Contains(chunk, "question_id="+id) || !strings.Contains(chunk, "question_type="+types[i]) {
+			t.Fatalf("chunk %s", chunk)
+		}
+		cursor += generationAt + len("generation started")
+	}
+	if strings.Contains(text, "level=ERROR") {
+		t.Fatalf("error log:\n%s", text)
+	}
+}
+
+func assertScoreShape(t *testing.T, ans map[string]any, both bool) {
+	t.Helper()
+	if ans["type"] != "score" {
+		t.Fatalf("type %#v", ans["type"])
+	}
+	if _, ok := ans["choice"]; ok {
+		t.Fatal("choice present")
+	}
+	legend := ans["legend"].(map[string]any)
+	if legend["0"] != "Calm" || legend["1"] != "Frustrated" || legend["2"] != "Very angry" {
+		t.Fatalf("legend %#v", legend)
+	}
+	probs := floatMap(t, ans["probabilities"])
+	sum := 0.0
+	weighted := 0.0
+	for i, key := range []string{"0", "1", "2"} {
+		value, ok := probs[key]
+		if !ok || value < 0 || value > 1 {
+			t.Fatalf("prob %s %#v", key, probs)
+		}
+		sum += value
+		weighted += float64(i) * value
+	}
+	if len(probs) != 3 || math.Abs(sum-1) > 1e-6 {
+		t.Fatalf("probs %#v", probs)
+	}
+	score := ans["score"].(float64)
+	if math.Abs(score-weighted) > 1e-6 || score < 0 || score > 2 {
+		t.Fatalf("score %v weighted %v", score, weighted)
+	}
+	conf := ans["confidence"].(float64)
+	if conf < 0 || conf > 1 {
+		t.Fatalf("confidence %v", conf)
+	}
+	if !both {
+		if _, ok := ans["generation"]; ok {
+			t.Fatal("generation present")
+		}
+		if ans["timings"].(map[string]any)["direct_ms"].(float64) <= 0 {
+			t.Fatal("direct_ms")
+		}
+	}
+}
+
+func assertNoulShape(t *testing.T, ans map[string]any) {
+	t.Helper()
+	for _, key := range []string{"choice", "probabilities", "confidence", "score", "legend"} {
+		if _, ok := ans[key]; ok {
+			t.Fatalf("unexpected %s in %#v", key, ans)
+		}
+	}
+	noul := ans["noul"].(float64)
+	if noul < 0 || noul > 1 {
+		t.Fatalf("noul %v", noul)
+	}
+	if _, ok := ans["urgent"]; ok {
+		t.Fatal("bool field")
+	}
+}
+
+func replaceMethod(raw []byte, method string) []byte {
+	return []byte(strings.Replace(string(raw), `"method": "direct"`, `"method": "`+method+`"`, 1))
+}
+
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	root, err := filepath.Abs("..")
