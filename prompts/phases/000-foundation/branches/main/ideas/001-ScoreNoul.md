@@ -113,10 +113,7 @@
    ```
 
    - `generation` / `both` の `direct_ms`、`generation_ms`、`ratio` の出し分けは choice と同じ。
-   - 検証用入力を次に置く。
-     - `features/decision-test/testdata/score.json`
-     - `features/decision-test/testdata/noul.json`
-     - `features/decision-test/testdata/mixed.json`（choice 1 問、score 1 問、noul 1 問。state は 3 ファイルで同じ文でよい）
+   - 検証用入力は `features/decision-test/testdata/` に置く。受理系は `score.json`、`noul.json`（`false` キーを先に書く）、`noul-omit.json`（criteria 無し）、`mixed.json`（`queue`、`frustration`、`is_urgent` の順、`method` は `both`）。422 系は `score-one.json`、`score-eleven.json`、`score-object.json`、`score-empty.json`、`noul-true-only.json`、`noul-extra-key.json`、`type-rank.json`。state は受理系も拒否系も `Help! My payouts have been failing for 3 days.` で揃える。
 
 ### 任意要件（本仕様では実装しない）
 
@@ -159,7 +156,7 @@ flowchart TD
 
 ### 1. score の形（direct）
 
-1. `features/decision-test/testdata/score.json` を作る。`type` は `score`。質問 ID は `frustration`。`instructions` は `How frustrated is the customer?`。`criteria` は `["Calm", "Frustrated", "Very angry"]`。`method` は `direct`。
+1. `features/decision-test/testdata/score.json` を使う。`type` は `score`。質問 ID は `frustration`。`instructions` は `How frustrated is the customer?`。`criteria` は `["Calm", "Frustrated", "Very angry"]`。`method` は `direct`。
 2. `decide --input features/decision-test/testdata/score.json --method direct --json` を実行する。
 3. HTTP 200。`answers.frustration.type` は `score`。`choice` キーは無い。
 4. `legend` は `"0":"Calm"`、`"1":"Frustrated"`、`"2":"Very angry"`。
@@ -171,7 +168,7 @@ flowchart TD
 
 ### 2. noul の形（criteria 付き、direct）
 
-1. `features/decision-test/testdata/noul.json` を作る。質問 ID は `is_urgent`。`instructions` は `Does this convey urgency?`。`criteria` は `{"true":"Explicitly time-sensitive","false":"No urgency expressed"}`。キー順は `false` を先に書く（実装がキー順で A/B を入れ替えないことの確認）。
+1. `features/decision-test/testdata/noul.json` を使う。質問 ID は `is_urgent`。`instructions` は `Does this convey urgency?`。`criteria` は `false` を先、`true` を後に書く（実装がキー順で A/B を入れ替えないことの確認）。
 2. `decide --input features/decision-test/testdata/noul.json --method direct --json` を実行する。
 3. HTTP 200。`answers.is_urgent` にある決定フィールドは `type`、`noul`、`method` と、direct の `timings` だけ。`choice`、`probabilities`、`confidence`、`score`、`legend` は無い。
 4. `noul` は 0 以上 1 以下。`0.5` で切った bool は無い。
@@ -179,7 +176,7 @@ flowchart TD
 
 ### 3. criteria を省略した noul
 
-1. シナリオ 2 の JSON から `criteria` を削除して POST する。
+1. `features/decision-test/testdata/noul-omit.json` を POST する。これは `noul.json` から `criteria` を除いたもの。
 2. HTTP 200。`noul` は 0 以上 1 以下。
 3. このリクエストを `method: generation` で再実行する。`generation.valid` が true のとき、`generated_text` のキーは順に `A: true`、`B: false`。合計は 1 ± 0.02。トップレベルの `noul` は、その JSON の A 側の確率と 1e-6 以内で一致する。
 
@@ -192,7 +189,7 @@ flowchart TD
 
 ### 5. 3 型を 1 リクエストで
 
-1. `features/decision-test/testdata/mixed.json` に、同じ state で `queue`（choice、account の 3 択）、`frustration`（score）、`is_urgent`（noul、criteria 付き）をこの順で置く。`method` は `both`。
+1. `features/decision-test/testdata/mixed.json` を使う。同じ state で `queue`（choice、account の 3 択）、`frustration`（score）、`is_urgent`（noul、criteria 付き）がこの順。`method` は `both`。
 2. POST する。
 3. 3 つの質問 ID がすべて返る。choice は `000-DecisionTest` の direct 規則（確率和 1 ± 1e-6、`output` 側の choice は 3 key のいずれか、`generation` キーは両方ある）。score と noul はシナリオ 1 と 2 の形。
 4. 各 `timings.ratio` は、その質問の `generation_ms / direct_ms` と相対誤差 1e-6。
@@ -201,15 +198,15 @@ flowchart TD
 
 ### 6. 拒否
 
-次はすべて 422。推論エンジンの呼び出し回数は 0。
+次はすべて 422。推論エンジンの呼び出し回数は 0。入力ファイルは `features/decision-test/testdata/` にある。
 
-1. score の `criteria` が 1 個。
-2. score の `criteria` が 11 個。
-3. score の `criteria` がオブジェクト。
-4. score の要素が `""`。
-5. noul の `criteria` が `{"true":"yes"}` だけ。
-6. noul の `criteria` に `maybe` がある。
-7. 未知の `type`（例: `rank`）は、これまでどおり未対応の 422。
+1. `score-one.json`。score の `criteria` が 1 個。
+2. `score-eleven.json`。score の `criteria` が 11 個。
+3. `score-object.json`。score の `criteria` がオブジェクト。
+4. `score-empty.json`。score の要素が `""`。
+5. `noul-true-only.json`。noul の `criteria` が `true` だけ。
+6. `noul-extra-key.json`。noul の `criteria` に `maybe` がある。
+7. `type-rank.json`。未知の `type` は、これまでどおり未対応の 422。
 
 ### 7. choice が壊れていない
 

@@ -1,0 +1,13 @@
+{
+  "state": "Help! My payouts have been failing for 3 days.",
+  "questions": {
+    "frustration": {
+      "type": "score",
+      "instructions": "How frustrated is the customer?",
+      "criteria": {
+        "0": "Calm",
+        "1": "Angry"
+      }
+    }
+  }
+}

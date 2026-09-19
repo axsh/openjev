@@ -1,0 +1,28 @@
+{
+  "state": "Help! My payouts have been failing for 3 days.",
+  "questions": {
+    "queue": {
+      "type": "choice",
+      "instructions": "Which queue should handle this request?",
+      "criteria": {
+        "account_access": "Account access support",
+        "billing": "Billing support",
+        "close": "Close as resolved"
+      }
+    },
+    "frustration": {
+      "type": "score",
+      "instructions": "How frustrated is the customer?",
+      "criteria": ["Calm", "Frustrated", "Very angry"]
+    },
+    "is_urgent": {
+      "type": "noul",
+      "instructions": "Does this convey urgency?",
+      "criteria": {
+        "false": "No urgency expressed",
+        "true": "Explicitly time-sensitive"
+      }
+    }
+  },
+  "options": { "method": "both" }
+}

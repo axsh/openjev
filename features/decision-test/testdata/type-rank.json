@@ -1,0 +1,13 @@
+{
+  "state": "Help! My payouts have been failing for 3 days.",
+  "questions": {
+    "rank": {
+      "type": "rank",
+      "instructions": "How should this be ranked?",
+      "criteria": {
+        "low": "Low",
+        "high": "High"
+      }
+    }
+  }
+}

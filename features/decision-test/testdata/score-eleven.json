@@ -1,0 +1,10 @@
+{
+  "state": "Help! My payouts have been failing for 3 days.",
+  "questions": {
+    "frustration": {
+      "type": "score",
+      "instructions": "How frustrated is the customer?",
+      "criteria": ["L0", "L1", "L2", "L3", "L4", "L5", "L6", "L7", "L8", "L9", "L10"]
+    }
+  }
+}

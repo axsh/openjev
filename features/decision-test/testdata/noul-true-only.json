@@ -1,0 +1,12 @@
+{
+  "state": "Help! My payouts have been failing for 3 days.",
+  "questions": {
+    "is_urgent": {
+      "type": "noul",
+      "instructions": "Does this convey urgency?",
+      "criteria": {
+        "true": "yes"
+      }
+    }
+  }
+}
