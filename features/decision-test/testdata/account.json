@@ -1,0 +1,14 @@
+{
+  "state": "A customer says a password reset succeeded, but every login attempt still returns ‘account locked’. Two unlock emails were requested and neither arrived.",
+  "questions": {
+    "queue": {
+      "type": "choice",
+      "instructions": "Which queue should handle this request?",
+      "criteria": {
+        "account_access": "Account access support",
+        "billing": "Billing support",
+        "close": "Close as resolved"
+      }
+    }
+  }
+}

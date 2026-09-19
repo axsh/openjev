@@ -1,0 +1,14 @@
+{
+  "state": "An email claims to be from the payroll team and says the recipient’s salary payment will be suspended today. It comes from payroll-review@outlook.com and links to a non-company sign-in page asking for a password and verification code.",
+  "questions": {
+    "classification": {
+      "type": "choice",
+      "instructions": "How should this email be classified?",
+      "criteria": {
+        "legitimate": "Legitimate",
+        "spam": "Spam",
+        "phishing": "Phishing"
+      }
+    }
+  }
+}
