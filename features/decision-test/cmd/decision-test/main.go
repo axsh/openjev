@@ -194,7 +194,7 @@ func buildServer(opts *serverOptions) (*http.Server, *logger.Logger, error) {
 		output = file
 	}
 	log := logger.New(output).WithComponent("decision")
-	eng := engine.NewClient(cfg.LlamaURL, log, cfg.LlamaParallel)
+	eng := engine.NewClient(cfg.LlamaURL, log, cfg.Workers)
 	labels, labelErr := engine.ResolveLabels(context.Background(), eng)
 	var svc *decision.Service
 	readyErr := ""

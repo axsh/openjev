@@ -139,88 +139,67 @@ func TestResolveLabels(t *testing.T) {
 	})
 }
 
-func TestSerializeRequests(t *testing.T) {
-	var inFlight int32
-	var maxSeen int32
-	release := make(chan struct{})
-	entered := make(chan struct{})
-	var once sync.Once
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		n := atomic.AddInt32(&inFlight, 1)
-		for {
-			old := atomic.LoadInt32(&maxSeen)
-			if n <= old || atomic.CompareAndSwapInt32(&maxSeen, old, n) {
-				break
-			}
-		}
-		once.Do(func() { close(entered) })
-		<-release
-		atomic.AddInt32(&inFlight, -1)
-		_, _ = io.WriteString(w, `{"choices":[{"logprobs":{"content":[{"top_logprobs":[{"id":1,"logprob":0}]}]}}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`)
-	}))
-	defer srv.Close()
-	client := NewClient(srv.URL, nil, 1)
-	labels := []Label{{Letter: "A", TokenID: 1}}
-	go func() { _, _ = client.ReadLabelLogprobs(context.Background(), nil, labels) }()
-	<-entered
-	done := make(chan struct{})
-	go func() {
-		_, _ = client.ReadLabelLogprobs(context.Background(), nil, labels)
-		close(done)
-	}()
-	time.Sleep(30 * time.Millisecond)
-	if atomic.LoadInt32(&maxSeen) != 1 {
-		t.Fatalf("overlap max=%d", maxSeen)
-	}
-	close(release)
-	<-done
-}
-
-func TestTwoSlotOverlap(t *testing.T) {
-	var maxSeen int32
-	var inFlight int32
-	entered := make(chan struct{})
-	release := make(chan struct{})
-	var once sync.Once
+// TestConcurrentReadsNotSerialized fixes that the client no longer holds a
+// semaphore: four concurrent reads overlap inside llama, and health is answered
+// while they are in flight.
+func TestConcurrentReadsNotSerialized(t *testing.T) {
+	const parallel = 4
+	var inFlight atomic.Int32
+	var maxSeen atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/health" {
 			_, _ = io.WriteString(w, `{"status":"ok"}`)
 			return
 		}
-		n := atomic.AddInt32(&inFlight, 1)
+		n := inFlight.Add(1)
 		for {
-			old := atomic.LoadInt32(&maxSeen)
-			if n <= old || atomic.CompareAndSwapInt32(&maxSeen, old, n) {
+			old := maxSeen.Load()
+			if n <= old || maxSeen.CompareAndSwap(old, n) {
 				break
 			}
 		}
-		once.Do(func() { close(entered) })
-		<-release
-		atomic.AddInt32(&inFlight, -1)
+		// Hold the request until every caller has entered (maxSeen is
+		// monotonic, so early leavers cannot stall late arrivals), bounded so
+		// a regression fails instead of hanging.
+		deadline := time.Now().Add(2 * time.Second)
+		for maxSeen.Load() < parallel && time.Now().Before(deadline) {
+			time.Sleep(10 * time.Millisecond)
+		}
+		inFlight.Add(-1)
 		_, _ = io.WriteString(w, `{"choices":[{"logprobs":{"content":[{"top_logprobs":[{"id":1,"logprob":0}]}]}}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`)
 	}))
 	defer srv.Close()
-	client := NewClient(srv.URL, nil, 2)
+	client := NewClient(srv.URL, nil, parallel)
 	labels := []Label{{Letter: "A", TokenID: 1}}
 	var wg sync.WaitGroup
-	for i := 0; i < 2; i++ {
+	for range parallel {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, _ = client.ReadLabelLogprobs(context.Background(), nil, labels)
+			if _, err := client.ReadLabelLogprobs(context.Background(), nil, labels); err != nil {
+				t.Error(err)
+			}
 		}()
 	}
-	<-entered
-	time.Sleep(30 * time.Millisecond)
 	healthStart := time.Now()
 	ok, err := client.Health(context.Background())
 	if err != nil || !ok || time.Since(healthStart) > 100*time.Millisecond {
 		t.Fatalf("health %v %v elapsed %s", ok, err, time.Since(healthStart))
 	}
-	close(release)
 	wg.Wait()
-	if atomic.LoadInt32(&maxSeen) != 2 {
-		t.Fatalf("max %d", maxSeen)
+	if maxSeen.Load() != parallel {
+		t.Fatalf("max concurrent %d, want %d", maxSeen.Load(), parallel)
+	}
+}
+
+func TestClientIdleConns(t *testing.T) {
+	seven := NewClient("http://127.0.0.1:1", nil, 7).http.Transport.(*http.Transport)
+	if seven.MaxIdleConnsPerHost != 7 || seven.MaxIdleConns < 7 {
+		t.Fatalf("idle conns %d / %d", seven.MaxIdleConnsPerHost, seven.MaxIdleConns)
+	}
+	zero := NewClient("http://127.0.0.1:1", nil, 0).http.Transport.(*http.Transport)
+	if zero.MaxIdleConnsPerHost != 1 {
+		t.Fatalf("idle conns %d", zero.MaxIdleConnsPerHost)
 	}
 }
 

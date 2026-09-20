@@ -505,7 +505,7 @@ None.（依頼者は `/create-implementation-plan -> /execute-implementation-pla
     *   Edit `internal/domain/validate.go`: `errTextEmpty` / `errTextType`, `Text.UnmarshalJSON` / `PromptText` / `Raw`, `parseQuestion` の `instructions` を raw に、`Validate` の文言分岐、`marshalRequest` の書き戻し、`TakeQuestions`、`QuestionCount`.
     *   Edit `internal/decision/service.go` `one`: `question.Instructions.PromptText()` を `prompt.Messages` に渡す（コンパイルを通す最小変更）。Edit `internal/decision/service_test.go` `testQuestion`: `domain.TextOf("Which queue?")`.
     *   Run `./scripts/process/build.sh`. Commit `feat(decision-test): accept object instructions and add question fixtures`.
-2. [ ] **engine + config + settings: セマフォ撤去と新設定キー**
+2. [x] **engine + config + settings: セマフォ撤去と新設定キー**
     *   Edit `internal/engine/llamacpp_test.go`: remove `TestSerializeRequests` / `TestTwoSlotOverlap`, add `TestConcurrentReadsNotSerialized`, `TestClientIdleConns`.
     *   Edit `internal/engine/llamacpp.go`: remove `sem` / `acquire` / `release`, `NewClient(baseURL, log, maxIdleConns)` with cloned transport.
     *   Edit `internal/config/config_test.go`: `baseYAML`, `TestLoadDefaults`, `TestLoadRejectsNegative`, `TestLoadIgnoresLlamaParallel`.

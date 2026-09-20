@@ -19,33 +19,27 @@ import (
 type Client struct {
 	baseURL string
 	http    *http.Client
-	sem     chan struct{}
 	log     *logger.Logger
 }
 
-func NewClient(baseURL string, log *logger.Logger, parallel int) *Client {
-	if parallel < 1 {
-		parallel = 1
+// NewClient builds a llama-server client. Concurrency toward llama is bounded
+// by the caller (the decision worker pool), not by this client. maxIdleConns
+// sizes the keep-alive pool and should match the worker count; values below 1
+// become 1.
+func NewClient(baseURL string, log *logger.Logger, maxIdleConns int) *Client {
+	if maxIdleConns < 1 {
+		maxIdleConns = 1
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.MaxIdleConnsPerHost = maxIdleConns
+	if transport.MaxIdleConns < maxIdleConns {
+		transport.MaxIdleConns = maxIdleConns
 	}
 	return &Client{
 		baseURL: strings.TrimRight(baseURL, "/"),
-		http:    &http.Client{Timeout: 10 * time.Minute},
-		sem:     make(chan struct{}, parallel),
+		http:    &http.Client{Timeout: 10 * time.Minute, Transport: transport},
 		log:     log,
 	}
-}
-
-func (c *Client) acquire(ctx context.Context) error {
-	select {
-	case c.sem <- struct{}{}:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
-func (c *Client) release() {
-	<-c.sem
 }
 
 type directBody struct {
@@ -73,10 +67,6 @@ type genBody struct {
 }
 
 func (c *Client) ReadLabelLogprobs(ctx context.Context, messages []prompt.Message, labels []Label) (ReadResult, error) {
-	if err := c.acquire(ctx); err != nil {
-		return ReadResult{}, err
-	}
-	defer c.release()
 	start := time.Now()
 	bias := map[string]float64{}
 	for _, label := range labels {
@@ -118,10 +108,6 @@ func (c *Client) ReadLabelLogprobs(ctx context.Context, messages []prompt.Messag
 }
 
 func (c *Client) Generate(ctx context.Context, messages []prompt.Message) (GenRaw, error) {
-	if err := c.acquire(ctx); err != nil {
-		return GenRaw{}, err
-	}
-	defer c.release()
 	start := time.Now()
 	body := genBody{
 		Messages:           messages,
@@ -211,10 +197,6 @@ func (c *Client) Health(ctx context.Context) (bool, error) {
 }
 
 func (c *Client) Warmup(ctx context.Context) error {
-	if err := c.acquire(ctx); err != nil {
-		return err
-	}
-	defer c.release()
 	body := genBody{
 		Messages:           []prompt.Message{{Role: "user", Content: "Reply with the single word ready."}},
 		MaxTokens:          1,
