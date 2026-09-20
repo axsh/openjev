@@ -521,7 +521,7 @@ None.（依頼者は `/create-implementation-plan -> /execute-implementation-pla
     *   Edit `internal/api/api_test.go`: `newService(t, eng)` with pool, atomic `calls`, 2-question 502, health fields, numeric instructions 422, `TestPlaygroundFixture`.
     *   Edit `cmd/decision-test/main.go`: pool start/stop, `StallTimeout`, health `workers` / `queue_depth`, INFO fields.
     *   Run `./scripts/process/build.sh`. Commit `feat(decision-test): answer questions of one request through a worker pool with stall cutoff`.
-4. [ ] **cli: `load --questions` / `--workers` と集計**
+4. [x] **cli: `load --questions` / `--workers` と集計**
     *   Edit `internal/cli/load_test.go`: `TestLoadTakesQuestions`, `TestLoadCountsMissingAnswers`, `TestLoadQuestionsExceeds`, `TestLoadHumanReport`, extended `TestLoadParallel`.
     *   Edit `internal/cli/load.go`: options, report fields, `inspectAnswers`, `summarize`, exit rule, human lines.
     *   Edit `cmd/decision-test/main.go`: `--questions`, `--workers` flags and validation.

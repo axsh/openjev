@@ -22,7 +22,11 @@ type LoadOptions struct {
 	Method      string
 	Concurrency int
 	Slots       int
-	JSON        bool
+	// Workers is a report label only; it does not change the server.
+	Workers int
+	// Questions keeps only the first N questions of the input; 0 sends the input unchanged.
+	Questions int
+	JSON      bool
 }
 
 type LatencyMs struct {
@@ -33,21 +37,27 @@ type LatencyMs struct {
 }
 
 type LoadReport struct {
-	Slots         int            `json:"slots"`
-	Concurrency   int            `json:"concurrency"`
-	Requests      int            `json:"requests"`
-	Success       int            `json:"success"`
-	Errors        int            `json:"errors"`
-	Statuses      map[string]int `json:"statuses"`
-	WallMs        float64        `json:"wall_ms"`
-	LatencyMs     LatencyMs      `json:"latency_ms"`
-	ThroughputRps float64        `json:"throughput_rps"`
-	DirectMsSum   *float64       `json:"direct_ms_sum,omitempty"`
+	Slots           int            `json:"slots"`
+	Workers         int            `json:"workers"`
+	Concurrency     int            `json:"concurrency"`
+	Requests        int            `json:"requests"`
+	Questions       int            `json:"questions"`
+	Success         int            `json:"success"`
+	Errors          int            `json:"errors"`
+	Answers         int            `json:"answers"`
+	AnswersMissing  int            `json:"answers_missing"`
+	Statuses        map[string]int `json:"statuses"`
+	WallMs          float64        `json:"wall_ms"`
+	LatencyMs       LatencyMs      `json:"latency_ms"`
+	ThroughputRps   float64        `json:"throughput_rps"`
+	QuestionsPerSec float64        `json:"questions_per_sec"`
+	DirectMsSum     *float64       `json:"direct_ms_sum,omitempty"`
 }
 
 type loadResult struct {
 	status    int
 	latency   float64
+	answers   int
 	direct    float64
 	hasDirect bool
 	err       error
@@ -58,7 +68,15 @@ func Load(ctx context.Context, opt LoadOptions, stdout, stderr io.Writer) error 
 	if err != nil {
 		return err
 	}
-	body, err := domain.ApplyMethod(raw, opt.Method)
+	body, err := domain.TakeQuestions(raw, opt.Questions)
+	if err != nil {
+		return err
+	}
+	body, err = domain.ApplyMethod(body, opt.Method)
+	if err != nil {
+		return err
+	}
+	questions, err := domain.QuestionCount(body)
 	if err != nil {
 		return err
 	}
@@ -78,13 +96,18 @@ func Load(ctx context.Context, opt LoadOptions, stdout, stderr io.Writer) error 
 	wallStart := time.Now()
 	close(startGate)
 	wg.Wait()
-	report := summarize(opt, results, float64(time.Since(wallStart).Microseconds())/1000)
+	report := summarize(opt, questions, results, float64(time.Since(wallStart).Microseconds())/1000)
 	if err := writeLoad(stdout, opt.JSON, report); err != nil {
 		return err
 	}
 	if report.Errors > 0 {
 		fmt.Fprintf(stderr, "errors %d\n", report.Errors)
-		return fmt.Errorf("errors %d", report.Errors)
+	}
+	if report.AnswersMissing > 0 {
+		fmt.Fprintf(stderr, "answers_missing %d\n", report.AnswersMissing)
+	}
+	if report.Errors > 0 || report.AnswersMissing > 0 {
+		return fmt.Errorf("errors %d answers_missing %d", report.Errors, report.AnswersMissing)
 	}
 	return nil
 }
@@ -111,11 +134,12 @@ func oneLoad(ctx context.Context, client *http.Client, server string, body []byt
 		result.err = fmt.Errorf("status %d", resp.StatusCode)
 		return result
 	}
-	result.direct, result.hasDirect = sumDirect(raw)
+	result.answers, result.direct, result.hasDirect = inspectAnswers(raw)
 	return result
 }
 
-func sumDirect(raw []byte) (float64, bool) {
+// inspectAnswers counts the answers in a response body and sums their direct_ms.
+func inspectAnswers(raw []byte) (count int, direct float64, hasDirect bool) {
 	var body struct {
 		Answers map[string]struct {
 			Timings *struct {
@@ -124,25 +148,26 @@ func sumDirect(raw []byte) (float64, bool) {
 		} `json:"answers"`
 	}
 	if err := json.Unmarshal(raw, &body); err != nil {
-		return 0, false
+		return 0, 0, false
 	}
-	sum := 0.0
-	found := false
 	for _, ans := range body.Answers {
+		count++
 		if ans.Timings == nil {
 			continue
 		}
-		sum += ans.Timings.DirectMs
-		found = true
+		direct += ans.Timings.DirectMs
+		hasDirect = true
 	}
-	return sum, found
+	return count, direct, hasDirect
 }
 
-func summarize(opt LoadOptions, results []loadResult, wall float64) LoadReport {
+func summarize(opt LoadOptions, questions int, results []loadResult, wall float64) LoadReport {
 	report := LoadReport{
 		Slots:       opt.Slots,
+		Workers:     opt.Workers,
 		Concurrency: opt.Concurrency,
 		Requests:    opt.Concurrency,
+		Questions:   questions,
 		Statuses:    map[string]int{},
 		WallMs:      wall,
 	}
@@ -161,11 +186,13 @@ func summarize(opt LoadOptions, results []loadResult, wall float64) LoadReport {
 			continue
 		}
 		report.Success++
+		report.Answers += result.answers
 		if result.hasDirect {
 			direct += result.direct
 			sawDirect = true
 		}
 	}
+	report.AnswersMissing = report.Success*report.Questions - report.Answers
 	sort.Float64s(latencies)
 	if len(latencies) > 0 {
 		report.LatencyMs = LatencyMs{
@@ -177,8 +204,10 @@ func summarize(opt LoadOptions, results []loadResult, wall float64) LoadReport {
 	}
 	if wall == 0 {
 		report.ThroughputRps = 0
+		report.QuestionsPerSec = 0
 	} else {
 		report.ThroughputRps = float64(report.Success) / (wall / 1000)
+		report.QuestionsPerSec = float64(report.Answers) / (wall / 1000)
 	}
 	if sawDirect {
 		report.DirectMsSum = &direct
@@ -208,10 +237,14 @@ func writeLoad(stdout io.Writer, asJSON bool, report LoadReport) error {
 		return err
 	}
 	fmt.Fprintf(stdout, "slots: %d\n", report.Slots)
+	fmt.Fprintf(stdout, "workers: %d\n", report.Workers)
 	fmt.Fprintf(stdout, "concurrency: %d\n", report.Concurrency)
 	fmt.Fprintf(stdout, "requests: %d\n", report.Requests)
+	fmt.Fprintf(stdout, "questions: %d\n", report.Questions)
 	fmt.Fprintf(stdout, "success: %d\n", report.Success)
 	fmt.Fprintf(stdout, "errors: %d\n", report.Errors)
+	fmt.Fprintf(stdout, "answers: %d\n", report.Answers)
+	fmt.Fprintf(stdout, "answers_missing: %d\n", report.AnswersMissing)
 	keys := make([]string, 0, len(report.Statuses))
 	for key := range report.Statuses {
 		keys = append(keys, key)
@@ -226,6 +259,7 @@ func writeLoad(stdout io.Writer, asJSON bool, report LoadReport) error {
 	fmt.Fprintf(stdout, "latency_p95_ms: %.3f\n", report.LatencyMs.P95)
 	fmt.Fprintf(stdout, "latency_max_ms: %.3f\n", report.LatencyMs.Max)
 	fmt.Fprintf(stdout, "throughput_rps: %.3f\n", report.ThroughputRps)
+	fmt.Fprintf(stdout, "questions_per_sec: %.3f\n", report.QuestionsPerSec)
 	if report.DirectMsSum != nil {
 		fmt.Fprintf(stdout, "direct_ms_sum: %.3f\n", *report.DirectMsSum)
 	}

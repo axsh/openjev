@@ -133,7 +133,7 @@ func runDecide(opts *serverOptions, input, server, method string, asJSON bool) e
 
 func loadCommand() *cobra.Command {
 	var input, server, method string
-	var concurrency, slots int
+	var concurrency, slots, workers, questions int
 	var asJSON bool
 	cmd := &cobra.Command{
 		Use: "load",
@@ -141,9 +141,20 @@ func loadCommand() *cobra.Command {
 			if concurrency < 1 || slots < 1 {
 				return fmt.Errorf("concurrency and slots must be >= 1")
 			}
+			if workers < 0 || questions < 0 {
+				return fmt.Errorf("workers and questions must be >= 0")
+			}
 			var err error
 			humacli.WithOptions(func(cmd *cobra.Command, args []string, opts *serverOptions) {
-				err = runLoad(opts, input, server, method, concurrency, slots, asJSON)
+				err = runLoad(opts, server, cli.LoadOptions{
+					Input:       input,
+					Method:      method,
+					Concurrency: concurrency,
+					Slots:       slots,
+					Workers:     workers,
+					Questions:   questions,
+					JSON:        asJSON,
+				})
 			})(cmd, args)
 			return err
 		},
@@ -153,6 +164,8 @@ func loadCommand() *cobra.Command {
 	cmd.Flags().StringVar(&method, "method", "", "Override options.method")
 	cmd.Flags().IntVar(&concurrency, "concurrency", 0, "Number of parallel requests")
 	cmd.Flags().IntVar(&slots, "slots", 0, "Slot count recorded in the report")
+	cmd.Flags().IntVar(&workers, "workers", 0, "Worker count recorded in the report")
+	cmd.Flags().IntVar(&questions, "questions", 0, "Keep only the first N questions of the input (0 = all)")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "Print the report as JSON")
 	_ = cmd.MarkFlagRequired("input")
 	_ = cmd.MarkFlagRequired("concurrency")
@@ -160,7 +173,7 @@ func loadCommand() *cobra.Command {
 	return cmd
 }
 
-func runLoad(opts *serverOptions, input, server, method string, concurrency, slots int, asJSON bool) error {
+func runLoad(opts *serverOptions, server string, load cli.LoadOptions) error {
 	if server == "" {
 		cfg, err := config.Load(opts.Config)
 		if err != nil {
@@ -172,14 +185,8 @@ func runLoad(opts *serverOptions, input, server, method string, concurrency, slo
 		}
 		server = fmt.Sprintf("http://%s:%d", cfg.APIHost, port)
 	}
-	return cli.Load(context.Background(), cli.LoadOptions{
-		Input:       input,
-		Server:      server,
-		Method:      method,
-		Concurrency: concurrency,
-		Slots:       slots,
-		JSON:        asJSON,
-	}, os.Stdout, os.Stderr)
+	load.Server = server
+	return cli.Load(context.Background(), load, os.Stdout, os.Stderr)
 }
 
 func buildServer(opts *serverOptions) (*http.Server, *logger.Logger, context.CancelFunc, error) {
