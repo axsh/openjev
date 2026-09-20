@@ -526,7 +526,7 @@ None.（依頼者は `/create-implementation-plan -> /execute-implementation-pla
     *   Edit `internal/cli/load.go`: options, report fields, `inspectAnswers`, `summarize`, exit rule, human lines.
     *   Edit `cmd/decision-test/main.go`: `--questions`, `--workers` flags and validation.
     *   Run `./scripts/process/build.sh`. Commit `feat(decision-test): measure questions per request in load`.
-5. [ ] **tests + README: Batch ベンチマークと退行の改訂**
+5. [x] **tests + README: Batch ベンチマークと退行の改訂**
     *   Edit `tests/decision_systemone_test.go`: `loadReport`, `writeOwnedConfig`, `runLoad`, `TestDecisionSystemOne_Load` update, `TestDecisionSystemOne_Batch`, `TestDecisionSystemOne_Mixed` per-ID order, `TestDecisionSystemOne_Playground`.
     *   Edit `README.md` (Documentation 節).
     *   Run `./scripts/process/build.sh`. Commit `test(decision-test): add question-count batch benchmark and relax per-question log order`.

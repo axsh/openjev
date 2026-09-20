@@ -7,8 +7,10 @@ MiniCPM5-2B GGUF, and answer questions in the style of
 **noul**.
 
 The decision path can read first-token option probabilities (`direct`), run a
-constrained JSON generation (`generation`), or both. A `load` command fans out
-concurrent requests for throughput measurement.
+constrained JSON generation (`generation`), or both. One request carries a
+shared `state` and any number of `questions`; the server answers them in
+parallel through a worker pool. A `load` command measures both questions per
+request and concurrent requests.
 
 Primary code lives under `features/decision-test`. Paths, ports, and model pins
 are in `settings/decision-test.yaml`. Model weights and llama.cpp binaries are
@@ -23,8 +25,9 @@ not committed (`models/`, `third_party/`, `bin/`).
 - Network access once, to download the GGUF and the llama.cpp release zips
 
 VRAM note: MiniCPM5-2B Q4_K_M with `-c 2048` fits an **8 GB** laptop GPU
-(RTX 3070 class). Keep `llama_parallel` / `--parallel` modest unless you have
-remeasured.
+(RTX 3070 class). Keep `--parallel` modest unless you have remeasured; slot
+counts that do not divide 2048 (3, 5, 6) may pad the per-slot context and use
+more VRAM.
 
 ## Environment setup
 
@@ -48,7 +51,8 @@ Confirm settings in `settings/decision-test.yaml`:
 | `api_host` / `api_port` | `127.0.0.1` / `8090` | Decision API listen address |
 | `llama_host` / `llama_port` | `127.0.0.1` / `18080` | llama-server listen address |
 | `llama_url` | `http://127.0.0.1:18080` | URL the API uses to reach llama |
-| `llama_parallel` | `1` | Max concurrent inference calls from the API |
+| `workers` | `16` | Worker goroutines that answer questions; also the cap on concurrent llama calls |
+| `stall_timeout_ms` | `15000` | Per-request stall cutoff; missing answers are omitted from a 200 response |
 | `model_path` / `llama_binary` | under `models/` / `third_party/` | On-disk artifacts |
 
 If another process already owns port `18080`, change `llama_port` and
@@ -62,9 +66,12 @@ Use **two terminals**. llama-server stays in the foreground.
 
 ```bash
 ./scripts/setup/run_llama_server.sh
-# optional: more slots (must match llama_parallel in the API settings)
+# optional: more slots so llama batches more questions per decode step
 # ./scripts/setup/run_llama_server.sh --parallel 5
 ```
+
+`--parallel` does not have to match `workers`. Workers beyond the slot count
+wait inside llama-server's queue; the API never rejects on load.
 
 Wait until `http://127.0.0.1:18080/health` returns success.
 
@@ -99,6 +106,8 @@ Useful fixtures under `features/decision-test/testdata/`:
 - `noul.json` / `noul-omit.json` — yes/no style noul
 - `mixed.json` — choice + score + noul with `method: both`
 - `email.json` — generation-oriented sample
+- `bank.json` — 30 questions (choice / score / noul interleaved) on one state
+- `playground.json` — the Jev Playground example (3 questions)
 
 Flags:
 
@@ -106,7 +115,26 @@ Flags:
 - `--method` — override `options.method` (`direct` | `generation` | `both`)
 - `--json` — print the response body
 
-### 4. Load (concurrent requests)
+`instructions` may be a string, an object, or an array (objects and arrays are
+embedded as JSON text, like `state`).
+
+### 4. Load (questions per request, concurrent requests)
+
+Questions of one request are answered in parallel by the worker pool. To
+measure that, send one request at a time and vary the question count:
+
+```bash
+./bin/decision-test.exe load \
+  --input features/decision-test/testdata/bank.json \
+  --questions 10 \
+  --method direct \
+  --concurrency 1 \
+  --slots 5 \
+  --workers 16 \
+  --json
+```
+
+To measure concurrent requests instead, raise `--concurrency`:
 
 ```bash
 ./bin/decision-test.exe load \
@@ -114,14 +142,31 @@ Flags:
   --method direct \
   --concurrency 20 \
   --slots 5 \
+  --workers 16 \
   --json
 ```
 
-`--slots` is a **report label** only; it does not reconfigure llama-server.
-Align `--concurrency` with how hard you want to push the API, and set
-`run_llama_server.sh --parallel` / `llama_parallel` to the same slot count when
-comparing slot sizes. On this hardware, roughly **slots 5 / concurrency ~20**
-was a strong throughput vs latency tradeoff for `account.json` direct.
+- `--questions N` keeps only the first N questions of the input (0 = all).
+- `--slots` and `--workers` are **report labels** only; they do not
+  reconfigure llama-server or the API. Set `run_llama_server.sh --parallel`
+  and `workers` in the settings to match what you record.
+- The report adds `questions` (per request), `answers`, `answers_missing`
+  (`success x questions - answers`), and `questions_per_sec`. A non-zero
+  `answers_missing` makes the command exit non-zero.
+- `direct_ms` (and `direct_ms_sum`) is the time of the engine call. When
+  `workers` exceeds the slot count it includes the wait inside llama-server's
+  queue, not only inference.
+
+### 5. Partial answers
+
+Each handler watches its own progress: the number of tasks it has queued and
+the number of answers it has received. If neither changes for
+`stall_timeout_ms`, the handler stops waiting and returns HTTP 200 with the
+answers collected so far; the missing question IDs are simply absent from
+`answers`, and the server logs `systemone stalled` at WARN. This also happens
+to a single-question request that waits longer than `stall_timeout_ms` in the
+FIFO queue under heavy concurrent load, so raise the setting if you push
+`--concurrency` far past what `workers` and the slot count can drain in time.
 
 ## Tests
 
@@ -131,6 +176,10 @@ was a strong throughput vs latency tradeoff for `account.json` direct.
 
 # Integration (needs a warm llama-server matching settings/llama_url)
 ./scripts/process/integration_test.sh --specify "TestDecisionSystemOne"
+
+# Questions-per-request benchmark: slots 1..6 x questions 1,5,10,15,20,30 with
+# 30 workers. Starts its own llama-server; stop other llama processes first.
+./scripts/process/integration_test.sh --specify "TestDecisionSystemOne_Batch"
 ```
 
 Integration tests that start their own llama use ports `18280` / `18199` and do

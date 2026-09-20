@@ -316,23 +316,76 @@ func TestDecisionSystemOne_Mixed(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(logged)
-	order := []string{"queue", "frustration", "is_urgent"}
+	// Questions of one request run in parallel, so only the per-question order
+	// (direct before generation) is fixed; the order across IDs is not.
+	ids := []string{"queue", "frustration", "is_urgent"}
 	types := []string{"choice", "score", "noul"}
-	cursor := 0
-	for i, id := range order {
-		directAt := strings.Index(text[cursor:], "direct completed")
-		generationAt := strings.Index(text[cursor:], "generation started")
+	for i, id := range ids {
+		directAt := indexOfLogLine(text, "direct completed", "question_id="+id)
+		generationAt := indexOfLogLine(text, "generation started", "question_id="+id)
 		if directAt < 0 || generationAt < 0 || directAt > generationAt {
-			t.Fatalf("log order:\n%s", text)
+			t.Fatalf("log order for %s (direct %d, generation %d):\n%s", id, directAt, generationAt, text)
 		}
-		chunk := text[cursor+directAt : cursor+generationAt]
-		if !strings.Contains(chunk, "question_id="+id) || !strings.Contains(chunk, "question_type="+types[i]) {
-			t.Fatalf("chunk %s", chunk)
+		for _, at := range []int{directAt, generationAt} {
+			line := text[at:]
+			if end := strings.IndexByte(line, '\n'); end >= 0 {
+				line = line[:end]
+			}
+			if !strings.Contains(line, "question_type="+types[i]) {
+				t.Fatalf("log line %s", line)
+			}
 		}
-		cursor += generationAt + len("generation started")
 	}
 	if strings.Contains(text, "level=ERROR") {
 		t.Fatalf("error log:\n%s", text)
+	}
+}
+
+// indexOfLogLine returns the byte offset of the first log line containing both
+// substrings, or -1.
+func indexOfLogLine(text, msg, field string) int {
+	offset := 0
+	for _, line := range strings.Split(text, "\n") {
+		if strings.Contains(line, msg) && strings.Contains(line, field) {
+			return offset
+		}
+		offset += len(line) + 1
+	}
+	return -1
+}
+
+func TestDecisionSystemOne_Playground(t *testing.T) {
+	root := repoRoot(t)
+	if err := getOK(llamaHealth(t, root)); err != nil {
+		t.Fatal(err)
+	}
+	base := startServer(t, root, 18189, "")
+	raw := readRepo(t, root, filepath.Join("features", "decision-test", "testdata", "playground.json"))
+	body := postJSON(t, base+"/v1/systemone", raw)
+	answers := body["answers"].(map[string]any)
+	if len(answers) != 3 {
+		t.Fatalf("answers %d: %#v", len(answers), answers)
+	}
+	department := answer(t, body, "department")
+	if department["type"] != "choice" {
+		t.Fatalf("department %#v", department)
+	}
+	choice, _ := department["choice"].(string)
+	if choice != "billing" && choice != "technical" && choice != "other" {
+		t.Fatalf("choice %#v", department["choice"])
+	}
+	urgency := answer(t, body, "urgency")
+	score, _ := urgency["score"].(float64)
+	if urgency["type"] != "score" || score < 0 || score > 2 {
+		t.Fatalf("urgency %#v", urgency)
+	}
+	refund := answer(t, body, "wants_refund")
+	noul, _ := refund["noul"].(float64)
+	if refund["type"] != "noul" || noul < 0 || noul > 1 {
+		t.Fatalf("wants_refund %#v", refund)
+	}
+	if body["usage"].(map[string]any)["output_tokens"] != float64(3) {
+		t.Fatalf("usage %#v", body["usage"])
 	}
 }
 
@@ -660,28 +713,83 @@ func TestDecisionSystemOne_Load(t *testing.T) {
 	for _, slots := range []int{1, 2, 4} {
 		llama, llamaLogs := startOwnedLlama(t, llamaBin, model, slots)
 		logPath := filepath.Join(t.TempDir(), "decision.log")
-		cfg := writeSlotConfig(t, root, slots, logPath)
+		cfg := writeOwnedConfig(t, root, slots, logPath)
 		api, apiLogs := startOwnedAPI(t, root, apiBin, cfg)
 		base := "http://127.0.0.1:18199"
 		for _, n := range []int{1, 10, 50, 100} {
-			report := runLoad(t, apiBin, input, base, slots, n, n == 50)
-			t.Logf("slots=%d concurrency=%d success=%d errors=%d wall_ms=%.3f throughput_rps=%.3f statuses=%v", report.Slots, report.Concurrency, report.Success, report.Errors, report.WallMs, report.ThroughputRps, report.Statuses)
-			if report.Slots != slots || report.Concurrency != n || report.Requests != n || report.Success != n || report.Errors != 0 || report.WallMs <= 0 {
+			report := runLoad(t, apiBin, input, base, loadRun{slots: slots, workers: slots, concurrency: n, watchHealth: n == 50})
+			t.Logf("slots=%d concurrency=%d success=%d errors=%d answers=%d wall_ms=%.3f throughput_rps=%.3f statuses=%v", report.Slots, report.Concurrency, report.Success, report.Errors, report.Answers, report.WallMs, report.ThroughputRps, report.Statuses)
+			if report.Slots != slots || report.Workers != slots || report.Concurrency != n || report.Requests != n || report.Success != n || report.Errors != 0 || report.WallMs <= 0 {
 				t.Fatalf("report %+v", report)
+			}
+			if report.Questions != 1 || report.Answers != n || report.AnswersMissing != 0 {
+				t.Fatalf("answers %+v", report)
 			}
 			if len(report.Statuses) != 1 || report.Statuses["200"] != n {
 				t.Fatalf("statuses %+v", report.Statuses)
 			}
 		}
-		logRaw, err := os.ReadFile(logPath)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if strings.Contains(string(logRaw), "level=ERROR") {
-			t.Fatalf("api log has ERROR\n%s\n%s\n%s", logRaw, apiLogs.String(), llamaLogs.String())
-		}
+		assertCleanAPILog(t, logPath, apiLogs, llamaLogs)
 		stopProcess(api)
 		stopProcess(llama)
+	}
+}
+
+// TestDecisionSystemOne_Batch measures one request carrying n questions against
+// llama slot counts 1..6 with a 30-worker pool. Every cell must answer all n
+// questions without a stall cutoff; throughput is logged, not asserted.
+func TestDecisionSystemOne_Batch(t *testing.T) {
+	root := repoRoot(t)
+	settings := string(readRepo(t, root, filepath.Join("settings", "decision-test.yaml")))
+	model := filepath.Join(root, yamlValue(settings, "model_path"))
+	llamaBin := filepath.Join(root, yamlValue(settings, "llama_binary"))
+	requireFile(t, model)
+	requireFile(t, llamaBin)
+	apiBin, err := binaryPath(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := filepath.Join(root, "features", "decision-test", "testdata", "bank.json")
+	requireFile(t, input)
+	const workers = 30
+	for _, slots := range []int{1, 2, 3, 4, 5, 6} {
+		llama, llamaLogs := startOwnedLlama(t, llamaBin, model, slots)
+		logPath := filepath.Join(t.TempDir(), "decision.log")
+		cfg := writeOwnedConfig(t, root, workers, logPath)
+		api, apiLogs := startOwnedAPI(t, root, apiBin, cfg)
+		base := "http://127.0.0.1:18199"
+		for _, n := range []int{1, 5, 10, 15, 20, 30} {
+			report := runLoad(t, apiBin, input, base, loadRun{slots: slots, workers: workers, concurrency: 1, questions: n, watchHealth: n == 30})
+			direct := "n/a"
+			if report.DirectMsSum != nil {
+				direct = fmt.Sprintf("%.3f", *report.DirectMsSum)
+			}
+			t.Logf("slots=%d questions=%d wall_ms=%.3f p50_ms=%.3f questions_per_sec=%.3f direct_ms_sum=%s", slots, n, report.WallMs, report.LatencyMs.P50, report.QuestionsPerSec, direct)
+			if report.Slots != slots || report.Workers != workers || report.Concurrency != 1 || report.Requests != 1 || report.Success != 1 || report.Errors != 0 || report.WallMs <= 0 {
+				t.Fatalf("report %+v", report)
+			}
+			if report.Questions != n || report.Answers != n || report.AnswersMissing != 0 {
+				t.Fatalf("answers %+v", report)
+			}
+			if len(report.Statuses) != 1 || report.Statuses["200"] != 1 {
+				t.Fatalf("statuses %+v", report.Statuses)
+			}
+		}
+		assertCleanAPILog(t, logPath, apiLogs, llamaLogs)
+		stopProcess(api)
+		stopProcess(llama)
+	}
+}
+
+func assertCleanAPILog(t *testing.T, logPath string, apiLogs, llamaLogs *bytes.Buffer) {
+	t.Helper()
+	logRaw, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(logRaw)
+	if strings.Contains(text, "level=ERROR") || strings.Contains(text, "systemone stalled") {
+		t.Fatalf("api log has ERROR or stall\n%s\n%s\n%s", text, apiLogs.String(), llamaLogs.String())
 	}
 }
 
@@ -746,29 +854,35 @@ func startOwnedAPI(t *testing.T, root, bin, cfg string) (*exec.Cmd, *bytes.Buffe
 	return nil, nil
 }
 
-func writeSlotConfig(t *testing.T, root string, slots int, logPath string) string {
+// writeOwnedConfig writes a settings file for an API that the test owns:
+// port 18199, llama at 18280, the given worker count, and the default stall
+// timeout. Any legacy llama_parallel line is dropped.
+func writeOwnedConfig(t *testing.T, root string, workers int, logPath string) string {
 	t.Helper()
 	raw := readRepo(t, root, filepath.Join("settings", "decision-test.yaml"))
-	lines := strings.Split(string(raw), "\n")
-	sawParallel := false
-	for i, line := range lines {
+	var lines []string
+	sawWorkers := false
+	for _, line := range strings.Split(string(raw), "\n") {
 		trim := strings.TrimSpace(line)
 		switch {
 		case strings.HasPrefix(trim, "api_port:"):
-			lines[i] = "api_port: 18199"
+			line = "api_port: 18199"
 		case strings.HasPrefix(trim, "llama_url:"):
-			lines[i] = "llama_url: http://127.0.0.1:18280"
+			line = "llama_url: http://127.0.0.1:18280"
 		case strings.HasPrefix(trim, "llama_port:"):
-			lines[i] = "llama_port: 18280"
+			line = "llama_port: 18280"
+		case strings.HasPrefix(trim, "workers:"):
+			line = "workers: " + strconv.Itoa(workers)
+			sawWorkers = true
 		case strings.HasPrefix(trim, "llama_parallel:"):
-			lines[i] = "llama_parallel: " + strconv.Itoa(slots)
-			sawParallel = true
+			continue
 		case strings.HasPrefix(trim, "log_path:"):
-			lines[i] = "log_path: " + strconv.Quote(filepath.ToSlash(logPath))
+			line = "log_path: " + strconv.Quote(filepath.ToSlash(logPath))
 		}
+		lines = append(lines, line)
 	}
-	if !sawParallel {
-		lines = append(lines, "llama_parallel: "+strconv.Itoa(slots))
+	if !sawWorkers {
+		lines = append(lines, "workers: "+strconv.Itoa(workers))
 	}
 	path := filepath.Join(t.TempDir(), "decision-test.yaml")
 	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
@@ -778,26 +892,50 @@ func writeSlotConfig(t *testing.T, root string, slots int, logPath string) strin
 }
 
 type loadReport struct {
-	Slots         int            `json:"slots"`
-	Concurrency   int            `json:"concurrency"`
-	Requests      int            `json:"requests"`
-	Success       int            `json:"success"`
-	Errors        int            `json:"errors"`
-	Statuses      map[string]int `json:"statuses"`
-	WallMs        float64        `json:"wall_ms"`
-	ThroughputRps float64        `json:"throughput_rps"`
+	Slots          int            `json:"slots"`
+	Workers        int            `json:"workers"`
+	Concurrency    int            `json:"concurrency"`
+	Requests       int            `json:"requests"`
+	Questions      int            `json:"questions"`
+	Success        int            `json:"success"`
+	Errors         int            `json:"errors"`
+	Answers        int            `json:"answers"`
+	AnswersMissing int            `json:"answers_missing"`
+	Statuses       map[string]int `json:"statuses"`
+	WallMs         float64        `json:"wall_ms"`
+	LatencyMs      struct {
+		Min float64 `json:"min"`
+		P50 float64 `json:"p50"`
+		P95 float64 `json:"p95"`
+		Max float64 `json:"max"`
+	} `json:"latency_ms"`
+	ThroughputRps   float64  `json:"throughput_rps"`
+	QuestionsPerSec float64  `json:"questions_per_sec"`
+	DirectMsSum     *float64 `json:"direct_ms_sum"`
 }
 
-func runLoad(t *testing.T, bin, input, server string, slots, n int, watchHealth bool) loadReport {
+type loadRun struct {
+	slots       int
+	workers     int
+	concurrency int
+	questions   int
+	watchHealth bool
+}
+
+func runLoad(t *testing.T, bin, input, server string, run loadRun) loadReport {
 	t.Helper()
-	cmd := exec.Command(bin, "load", "--input", input, "--server", server, "--method", "direct", "--concurrency", strconv.Itoa(n), "--slots", strconv.Itoa(slots), "--json")
+	args := []string{"load", "--input", input, "--server", server, "--method", "direct", "--concurrency", strconv.Itoa(run.concurrency), "--slots", strconv.Itoa(run.slots), "--workers", strconv.Itoa(run.workers), "--json"}
+	if run.questions > 0 {
+		args = append(args, "--questions", strconv.Itoa(run.questions))
+	}
+	cmd := exec.Command(bin, args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	if watchHealth {
+	if run.watchHealth {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		healthy := false
@@ -813,7 +951,8 @@ func runLoad(t *testing.T, bin, input, server string, slots, n int, watchHealth 
 			if err == nil {
 				body, _ := io.ReadAll(resp.Body)
 				resp.Body.Close()
-				if resp.StatusCode == http.StatusOK && strings.Contains(string(body), `"ready":true`) {
+				text := string(body)
+				if resp.StatusCode == http.StatusOK && strings.Contains(text, `"ready":true`) && strings.Contains(text, `"workers":`+strconv.Itoa(run.workers)) {
 					healthy = true
 					break
 				}
@@ -825,7 +964,7 @@ func runLoad(t *testing.T, bin, input, server string, slots, n int, watchHealth 
 		}
 		if !healthy {
 			stopProcess(cmd)
-			t.Fatalf("health during slots=%d concurrency=%d stderr=%s", slots, n, stderr.String())
+			t.Fatalf("health during slots=%d concurrency=%d questions=%d stderr=%s", run.slots, run.concurrency, run.questions, stderr.String())
 		}
 	}
 	waitErr := cmd.Wait()
@@ -833,7 +972,7 @@ func runLoad(t *testing.T, bin, input, server string, slots, n int, watchHealth 
 	if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &report); err != nil {
 		t.Fatalf("load json %v stdout %s stderr %s wait %v", err, stdout.String(), stderr.String(), waitErr)
 	}
-	if waitErr != nil || report.Errors != 0 {
+	if waitErr != nil || report.Errors != 0 || report.AnswersMissing != 0 {
 		t.Fatalf("load failed %v report %+v stderr %s", waitErr, report, stderr.String())
 	}
 	return report
