@@ -96,7 +96,38 @@ func TestValidate(t *testing.T) {
 		},
 		{name: "method_bad", raw: []byte(`{"state":"hello","questions":{"q":{"type":"choice","instructions":"Pick","criteria":{"a":"A","b":"B"}}},"options":{"method":"stream"}}`), wantErr: "method"},
 		{name: "no_questions", raw: []byte(`{"state":"hello","questions":{}}`), wantErr: "questions"},
-		{name: "empty_instructions", raw: []byte(`{"state":"hello","questions":{"q":{"type":"choice","instructions":"","criteria":{"a":"A","b":"B"}}}}`), wantErr: "instructions"},
+		{name: "empty_instructions", raw: []byte(`{"state":"hello","questions":{"q":{"type":"choice","instructions":"","criteria":{"a":"A","b":"B"}}}}`), wantErr: "instructions must not be empty"},
+		{name: "instructions_blank", raw: []byte(`{"state":"hello","questions":{"q":{"type":"choice","instructions":"   ","criteria":{"a":"A","b":"B"}}}}`), wantErr: "instructions must not be empty"},
+		{name: "instructions_null", raw: []byte(`{"state":"hello","questions":{"q":{"type":"choice","instructions":null,"criteria":{"a":"A","b":"B"}}}}`), wantErr: "instructions must not be empty"},
+		{name: "instructions_missing", raw: []byte(`{"state":"hello","questions":{"q":{"type":"choice","criteria":{"a":"A","b":"B"}}}}`), wantErr: "instructions must not be empty"},
+		{name: "instructions_number", raw: []byte(`{"state":"hello","questions":{"q":{"type":"choice","instructions":123,"criteria":{"a":"A","b":"B"}}}}`), wantErr: "instructions must be a string, object, or array"},
+		{name: "instructions_bool", raw: []byte(`{"state":"hello","questions":{"q":{"type":"choice","instructions":true,"criteria":{"a":"A","b":"B"}}}}`), wantErr: "instructions must be a string, object, or array"},
+		{
+			name: "instructions_object",
+			raw:  []byte(`{"state":"hello","questions":{"q":{"type":"choice","instructions":{"ask":"Which queue?","hint":"billing or access"},"criteria":{"a":"A","b":"B"}}}}`),
+			check: func(t *testing.T, req Request) {
+				text, err := req.Questions[0].Instructions.PromptText()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if text != `{"ask":"Which queue?","hint":"billing or access"}` {
+					t.Fatalf("prompt text %q", text)
+				}
+			},
+		},
+		{
+			name: "instructions_array",
+			raw:  []byte(`{"state":"hello","questions":{"q":{"type":"choice","instructions":["Which queue?","Pick one"],"criteria":{"a":"A","b":"B"}}}}`),
+			check: func(t *testing.T, req Request) {
+				text, err := req.Questions[0].Instructions.PromptText()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if text != `["Which queue?","Pick one"]` {
+					t.Fatalf("prompt text %q", text)
+				}
+			},
+		},
 		{
 			name: "question_order",
 			raw:  []byte(`{"state":"hello","questions":{"z":{"type":"choice","instructions":"Pick","criteria":{"a":"A","b":"B"}},"a":{"type":"choice","instructions":"Pick","criteria":{"a":"A","b":"B"}}}}`),
@@ -197,6 +228,126 @@ func TestScoreAndNoul(t *testing.T) {
 	}
 	if !strings.Contains(string(rewritten), `"true":"Explicitly time-sensitive"`) {
 		t.Fatalf("noul rewrite %s", rewritten)
+	}
+}
+
+func TestApplyMethodKeepsInstructionsJSON(t *testing.T) {
+	raw := []byte(`{"state":"hello","questions":{"q":{"type":"choice","instructions":{"ask":"Which queue?","hint":"billing or access"},"criteria":{"a":"A","b":"B"}}}}`)
+	out, err := ApplyMethod(raw, "generation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), `"instructions":{"ask":"Which queue?","hint":"billing or access"}`) {
+		t.Fatalf("instructions rewritten: %s", out)
+	}
+	if _, err := Validate(out, "minicpm5-2b-q4_k_m"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTakeQuestions(t *testing.T) {
+	bank, err := os.ReadFile(filepath.Join("..", "..", "testdata", "bank.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name    string
+		n       int
+		wantIDs []string
+		wantErr string
+	}{
+		{name: "zero_keeps_input", n: 0},
+		{name: "one", n: 1, wantIDs: []string{"queue"}},
+		{name: "five", n: 5, wantIDs: []string{"queue", "frustration", "is_urgent", "channel", "severity"}},
+		{name: "thirty", n: 30},
+		{name: "exceeds", n: 31, wantErr: "input has 30 questions; --questions 31 exceeds it"},
+		{name: "negative", n: -1, wantErr: "questions must be >= 0"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := TakeQuestions(bank, tt.n)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("error %v, want %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.n == 0 {
+				if string(out) != string(bank) {
+					t.Fatal("n=0 must return the input unchanged")
+				}
+				return
+			}
+			count, err := QuestionCount(out)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if count != tt.n {
+				t.Fatalf("count %d want %d", count, tt.n)
+			}
+			req, err := Validate(out, "minicpm5-2b-q4_k_m")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.wantIDs != nil {
+				got := make([]string, len(req.Questions))
+				for i, q := range req.Questions {
+					got[i] = q.ID
+				}
+				if strings.Join(got, ",") != strings.Join(tt.wantIDs, ",") {
+					t.Fatalf("ids %v want %v", got, tt.wantIDs)
+				}
+			}
+		})
+	}
+}
+
+func TestBankFixture(t *testing.T) {
+	bank, err := os.ReadFile(filepath.Join("..", "..", "testdata", "bank.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := Validate(bank, "minicpm5-2b-q4_k_m")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(req.Questions) != 30 {
+		t.Fatalf("questions %d", len(req.Questions))
+	}
+	seen := map[string]bool{}
+	types := []string{"choice", "score", "noul"}
+	for i, q := range req.Questions {
+		if seen[q.ID] {
+			t.Fatalf("duplicate id %s", q.ID)
+		}
+		seen[q.ID] = true
+		if q.Type != types[i%3] {
+			t.Fatalf("question %d (%s) type %s want %s", i, q.ID, q.Type, types[i%3])
+		}
+	}
+}
+
+func TestPlaygroundFixture(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "playground.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := Validate(raw, "minicpm5-2b-q4_k_m")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantIDs := []string{"department", "urgency", "wants_refund"}
+	wantTypes := []string{"choice", "score", "noul"}
+	if len(req.Questions) != 3 {
+		t.Fatalf("questions %d", len(req.Questions))
+	}
+	for i, q := range req.Questions {
+		if q.ID != wantIDs[i] || q.Type != wantTypes[i] {
+			t.Fatalf("question %d = %s/%s", i, q.ID, q.Type)
+		}
 	}
 }
 

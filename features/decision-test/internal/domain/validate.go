@@ -3,38 +3,55 @@ package domain
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 )
 
-func (s *State) UnmarshalJSON(b []byte) error {
+var (
+	errTextEmpty = errors.New("text is empty")
+	errTextType  = errors.New("text must be a string, object, or array")
+)
+
+func (t *Text) UnmarshalJSON(b []byte) error {
 	if len(bytes.TrimSpace(b)) == 0 {
-		return fmt.Errorf("state is empty")
+		return errTextEmpty
 	}
-	s.raw = append(json.RawMessage(nil), bytes.TrimSpace(b)...)
+	t.raw = append(json.RawMessage(nil), bytes.TrimSpace(b)...)
 	return nil
 }
 
-func (s State) PromptText() (string, error) {
-	raw := bytes.TrimSpace(s.raw)
+// PromptText renders the value for the prompt. Strings are returned as-is,
+// objects and arrays as their JSON text. Empty, blank, and null values return
+// errTextEmpty; numbers and booleans return errTextType.
+func (t Text) PromptText() (string, error) {
+	raw := bytes.TrimSpace(t.raw)
 	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
-		return "", fmt.Errorf("state is empty")
+		return "", errTextEmpty
 	}
 	if raw[0] == '"' {
 		var text string
 		if err := json.Unmarshal(raw, &text); err != nil {
-			return "", fmt.Errorf("state is empty")
+			return "", errTextEmpty
 		}
 		if strings.TrimSpace(text) == "" {
-			return "", fmt.Errorf("state is empty")
+			return "", errTextEmpty
 		}
 		return text, nil
 	}
 	if raw[0] == '{' || raw[0] == '[' {
 		return string(raw), nil
 	}
-	return "", fmt.Errorf("state is empty")
+	return "", errTextType
+}
+
+// Raw returns the trimmed JSON of the value, or nil when it was never set.
+func (t Text) Raw() json.RawMessage {
+	if len(t.raw) == 0 {
+		return nil
+	}
+	return bytes.TrimSpace(t.raw)
 }
 
 func Validate(raw []byte, configuredModelID string) (Request, error) {
@@ -50,7 +67,10 @@ func Validate(raw []byte, configuredModelID string) (Request, error) {
 	}
 	for qi := range req.Questions {
 		q := &req.Questions[qi]
-		if strings.TrimSpace(q.Instructions) == "" {
+		if _, err := q.Instructions.PromptText(); err != nil {
+			if errors.Is(err, errTextType) {
+				return Request{}, fmt.Errorf("instructions must be a string, object, or array")
+			}
 			return Request{}, fmt.Errorf("instructions must not be empty")
 		}
 		if err := interpretQuestion(q); err != nil {
@@ -85,6 +105,40 @@ func ApplyMethod(raw []byte, method string) ([]byte, error) {
 		}
 	}
 	return marshalRequest(req)
+}
+
+// TakeQuestions keeps the first n questions of a request body in appearance
+// order. n == 0 returns a copy of raw unchanged.
+func TakeQuestions(raw []byte, n int) ([]byte, error) {
+	if n < 0 {
+		return nil, fmt.Errorf("questions must be >= 0")
+	}
+	if n == 0 {
+		return append([]byte(nil), raw...), nil
+	}
+	req, err := parse(raw)
+	if err != nil {
+		return nil, err
+	}
+	if len(req.Questions) < n {
+		return nil, fmt.Errorf("input has %d questions; --questions %d exceeds it", len(req.Questions), n)
+	}
+	req.Questions = req.Questions[:n]
+	for i := range req.Questions {
+		if err := interpretQuestion(&req.Questions[i]); err != nil {
+			return nil, err
+		}
+	}
+	return marshalRequest(req)
+}
+
+// QuestionCount returns the number of questions in a request body.
+func QuestionCount(raw []byte) (int, error) {
+	req, err := parse(raw)
+	if err != nil {
+		return 0, err
+	}
+	return len(req.Questions), nil
 }
 
 func parse(raw []byte) (Request, error) {
@@ -182,9 +236,11 @@ func parseQuestion(dec *json.Decoder) (Question, error) {
 				return Question{}, err
 			}
 		case "instructions":
-			if err := dec.Decode(&q.Instructions); err != nil {
-				return Question{}, fmt.Errorf("instructions must be a string")
+			var raw json.RawMessage
+			if err := dec.Decode(&raw); err != nil {
+				return Question{}, err
 			}
+			q.Instructions.raw = raw
 		case "criteria":
 			var raw json.RawMessage
 			if err := dec.Decode(&raw); err != nil {
@@ -466,7 +522,11 @@ func marshalRequest(req Request) ([]byte, error) {
 		buf.WriteString(`:{"type":`)
 		writeJSON(&buf, q.Type)
 		buf.WriteString(`,"instructions":`)
-		writeJSON(&buf, q.Instructions)
+		if instructions := q.Instructions.Raw(); instructions == nil {
+			buf.WriteString("null")
+		} else {
+			buf.Write(instructions)
+		}
 		buf.WriteString(`,"criteria":`)
 		switch q.Type {
 		case "score":

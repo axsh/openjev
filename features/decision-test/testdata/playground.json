@@ -1,0 +1,27 @@
+{
+  "state": "I was charged twice for my subscription. Please refund the duplicate payment today; I need the money for an upcoming bill.",
+  "questions": {
+    "department": {
+      "type": "choice",
+      "instructions": "Which team should handle this support ticket?",
+      "criteria": {
+        "billing": "Payments, invoices and refunds",
+        "technical": "Bugs and integration failures",
+        "other": "None of the other teams fit"
+      }
+    },
+    "urgency": {
+      "type": "score",
+      "instructions": "How urgently does the customer need a response?",
+      "criteria": [
+        "No deadline or immediate impact",
+        "Needs a timely response but can wait",
+        "Explicit same-day deadline or immediate impact"
+      ]
+    },
+    "wants_refund": {
+      "type": "noul",
+      "instructions": "Is the customer explicitly asking for a refund?"
+    }
+  }
+}

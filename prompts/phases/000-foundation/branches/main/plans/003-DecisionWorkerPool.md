@@ -497,7 +497,7 @@ None.（依頼者は `/create-implementation-plan -> /execute-implementation-pla
 
 各ステップは「テストを書く → 失敗を確認 → 実装 → `./scripts/process/build.sh` が通る → コミット」。ビルドスクリプトは feature の全単体テストを走らせるので、ステップ途中の赤は同じステップ内で緑にしてからコミットする。
 
-1. [ ] **domain: `Text` と `instructions`、`TakeQuestions`、フィクスチャ**
+1. [x] **domain: `Text` と `instructions`、`TakeQuestions`、フィクスチャ**
     *   Add `features/decision-test/testdata/playground.json` and `features/decision-test/testdata/bank.json`.
     *   Edit `internal/domain/validate_test.go`: add the `instructions_*` table rows, `TestApplyMethodKeepsInstructionsJSON`, `TestTakeQuestions`, `TestBankFixture`, `TestPlaygroundFixture`.
     *   Edit `internal/prompt/prompt_test.go`: add `TestObjectInstructions`.

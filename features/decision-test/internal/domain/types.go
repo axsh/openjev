@@ -17,14 +17,28 @@ type Request struct {
 	Method    Method
 }
 
-type State struct {
+// Text holds a JSON string, object, or array and renders it for the prompt.
+// Strings are used as-is; objects and arrays are embedded as their JSON text.
+type Text struct {
 	raw json.RawMessage
+}
+
+// State is the shared context of a request; it follows the Text rules.
+type State = Text
+
+// TextOf wraps a plain string as Text for callers that build requests in Go.
+func TextOf(s string) Text {
+	raw, err := json.Marshal(s)
+	if err != nil {
+		return Text{}
+	}
+	return Text{raw: raw}
 }
 
 type Question struct {
 	ID           string
 	Type         string
-	Instructions string
+	Instructions Text
 	Criteria     []Criterion
 	criteriaRaw  json.RawMessage
 	sawCriteria  bool
@@ -117,5 +131,7 @@ type Health struct {
 	Model          string         `json:"model"`
 	LlamaReachable bool           `json:"llama_reachable"`
 	LabelTokenIDs  map[string]int `json:"label_token_ids"`
+	Workers        int            `json:"workers" doc:"Configured worker count of the decision pool."`
+	QueueDepth     int            `json:"queue_depth" doc:"Tasks currently waiting in the request queue."`
 	Error          string         `json:"error,omitempty"`
 }

@@ -47,6 +47,11 @@ func (s *Service) one(ctx context.Context, state string, question domain.Questio
 	if len(s.Labels) < len(question.Criteria) {
 		return domain.Answer{}, usage{}, fmt.Errorf("%w: not enough labels", ErrEngine)
 	}
+	instructions, err := question.Instructions.PromptText()
+	if err != nil {
+		// Validation rejects these before dispatch; keep the engine error shape if it ever slips through.
+		return domain.Answer{}, usage{}, fmt.Errorf("%w: %v", ErrEngine, err)
+	}
 	engLabels := s.Labels[:len(question.Criteria)]
 	decLabels := make([]Label, len(engLabels))
 	for i, label := range engLabels {
@@ -56,7 +61,7 @@ func (s *Service) one(ctx context.Context, state string, question domain.Questio
 	var used usage
 	var directMs float64
 	if method == domain.MethodDirect || method == domain.MethodBoth {
-		read, err := s.Engine.ReadLabelLogprobs(ctx, prompt.Messages(state, question.Instructions, question.Criteria, domain.MethodDirect, question.Type), engLabels)
+		read, err := s.Engine.ReadLabelLogprobs(ctx, prompt.Messages(state, instructions, question.Criteria, domain.MethodDirect, question.Type), engLabels)
 		if err != nil {
 			return domain.Answer{}, usage{}, fmt.Errorf("%w: %v", ErrEngine, err)
 		}
@@ -79,7 +84,7 @@ func (s *Service) one(ctx context.Context, state string, question domain.Questio
 	}
 	if method == domain.MethodGeneration || method == domain.MethodBoth {
 		s.Log.Debug("generation started", "question_id", question.ID, "question_type", question.Type)
-		raw, err := s.Engine.Generate(ctx, prompt.Messages(state, question.Instructions, question.Criteria, domain.MethodGeneration, question.Type))
+		raw, err := s.Engine.Generate(ctx, prompt.Messages(state, instructions, question.Criteria, domain.MethodGeneration, question.Type))
 		if err != nil {
 			return domain.Answer{}, usage{}, fmt.Errorf("%w: %v", ErrEngine, err)
 		}

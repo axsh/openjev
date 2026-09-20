@@ -46,7 +46,7 @@ func testQuestion() domain.Question {
 	return domain.Question{
 		ID:           "queue",
 		Type:         "choice",
-		Instructions: "Which queue?",
+		Instructions: domain.TextOf("Which queue?"),
 		Criteria: []domain.Criterion{
 			{Key: "account_access", Text: "account_access: Account access support"},
 			{Key: "billing", Text: "billing: Billing support"},

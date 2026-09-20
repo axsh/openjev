@@ -59,6 +59,13 @@ func TestObjectState(t *testing.T) {
 	}
 }
 
+func TestObjectInstructions(t *testing.T) {
+	msgs := Messages(accountState, `{"ask":"Which queue?","hint":"billing or access"}`, accountCriteria(), domain.MethodDirect, "choice")
+	if !strings.Contains(msgs[1].Content, "\n\nQuestion:\n{\"ask\":\"Which queue?\",\"hint\":\"billing or access\"}\n\nAllowed options:\n") {
+		t.Fatalf("question block:\n%s", msgs[1].Content)
+	}
+}
+
 func TestScoreSentence(t *testing.T) {
 	criteria := []domain.Criterion{{Key: "0", Text: "Calm"}, {Key: "1", Text: "Frustrated"}, {Key: "2", Text: "Very angry"}}
 	msgs := Messages("Help", "How frustrated is the customer?", criteria, domain.MethodDirect, "score")

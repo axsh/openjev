@@ -1,0 +1,212 @@
+{
+  "state": "A customer says a password reset succeeded, but every login attempt still returns ‘account locked’. Two unlock emails were requested and neither arrived.",
+  "questions": {
+    "queue": {
+      "type": "choice",
+      "instructions": "Which queue should handle this request?",
+      "criteria": {
+        "account_access": "Account access support",
+        "billing": "Billing support",
+        "close": "Close as resolved"
+      }
+    },
+    "frustration": {
+      "type": "score",
+      "instructions": "How frustrated is the customer?",
+      "criteria": ["Calm", "Frustrated", "Very angry"]
+    },
+    "is_urgent": {
+      "type": "noul",
+      "instructions": "Does this convey urgency?"
+    },
+    "channel": {
+      "type": "choice",
+      "instructions": "Which channel should the reply use?",
+      "criteria": {
+        "email": "Reply by email",
+        "phone": "Call the customer",
+        "chat": "Continue in live chat",
+        "none": "No reply needed"
+      }
+    },
+    "severity": {
+      "type": "score",
+      "instructions": "How severe is the impact on the customer?",
+      "criteria": ["No impact", "Minor inconvenience", "Blocked from a key task", "Complete loss of access"]
+    },
+    "mentions_email_delivery": {
+      "type": "noul",
+      "instructions": "Does the customer report that expected emails did not arrive?",
+      "criteria": {
+        "true": "Emails were expected and did not arrive",
+        "false": "No email delivery problem is mentioned"
+      }
+    },
+    "root_cause": {
+      "type": "choice",
+      "instructions": "What is the most likely root cause?",
+      "criteria": {
+        "lockout_policy": "Account lockout still active",
+        "reset_not_applied": "Password reset did not apply",
+        "email_delivery": "Unlock emails blocked or delayed",
+        "user_error": "Wrong credentials"
+      }
+    },
+    "clarity": {
+      "type": "score",
+      "instructions": "How clearly does the customer describe the problem?",
+      "criteria": ["Unclear", "Partially clear", "Clear"]
+    },
+    "needs_escalation": {
+      "type": "noul",
+      "instructions": "Should this be escalated to a specialist?"
+    },
+    "next_action": {
+      "type": "choice",
+      "instructions": "What should the agent do first?",
+      "criteria": {
+        "unlock_account": "Manually unlock the account",
+        "resend_email": "Resend the unlock email",
+        "verify_identity": "Verify the customer identity",
+        "ask_details": "Ask for more details"
+      }
+    },
+    "sentiment": {
+      "type": "score",
+      "instructions": "What is the overall sentiment?",
+      "criteria": ["Negative", "Neutral", "Positive"]
+    },
+    "is_repeat_contact": {
+      "type": "noul",
+      "instructions": "Does the message indicate more than one attempt to get help?",
+      "criteria": {
+        "true": "The customer already tried more than once",
+        "false": "This is the first attempt"
+      }
+    },
+    "priority": {
+      "type": "choice",
+      "instructions": "Which priority applies?",
+      "criteria": {
+        "p1": "Critical",
+        "p2": "High",
+        "p3": "Medium",
+        "p4": "Low"
+      }
+    },
+    "urgency": {
+      "type": "score",
+      "instructions": "How urgently does the customer need a response?",
+      "criteria": ["No deadline", "Soon", "Immediately"]
+    },
+    "security_risk": {
+      "type": "noul",
+      "instructions": "Is there a sign of a security concern such as account takeover?"
+    },
+    "category": {
+      "type": "choice",
+      "instructions": "Which category fits best?",
+      "criteria": {
+        "authentication": "Login and passwords",
+        "notifications": "Email and alerts",
+        "billing": "Payments",
+        "other": "Something else"
+      }
+    },
+    "completeness": {
+      "type": "score",
+      "instructions": "How complete is the information for troubleshooting?",
+      "criteria": ["Missing key facts", "Some facts missing", "Complete"]
+    },
+    "wants_refund": {
+      "type": "noul",
+      "instructions": "Is the customer asking for a refund?",
+      "criteria": {
+        "true": "A refund is requested",
+        "false": "No refund is requested"
+      }
+    },
+    "sla_tier": {
+      "type": "choice",
+      "instructions": "Which SLA tier does this fall under?",
+      "criteria": {
+        "standard": "Standard",
+        "expedited": "Expedited",
+        "immediate": "Immediate"
+      }
+    },
+    "churn_risk": {
+      "type": "score",
+      "instructions": "How likely is the customer to leave?",
+      "criteria": ["Unlikely", "Possible", "Likely", "Very likely"]
+    },
+    "has_workaround": {
+      "type": "noul",
+      "instructions": "Does the customer mention a workaround that works?"
+    },
+    "product_area": {
+      "type": "choice",
+      "instructions": "Which product area is affected?",
+      "criteria": {
+        "login": "Login",
+        "password_reset": "Password reset",
+        "email": "Email delivery",
+        "account_settings": "Account settings"
+      }
+    },
+    "politeness": {
+      "type": "score",
+      "instructions": "How polite is the customer?",
+      "criteria": ["Rude", "Neutral", "Polite"]
+    },
+    "self_service_possible": {
+      "type": "noul",
+      "instructions": "Could the customer resolve this without an agent?",
+      "criteria": {
+        "true": "A self-service path exists",
+        "false": "Agent action is required"
+      }
+    },
+    "reply_tone": {
+      "type": "choice",
+      "instructions": "Which tone should the reply use?",
+      "criteria": {
+        "apologetic": "Apologetic",
+        "neutral": "Neutral",
+        "reassuring": "Reassuring"
+      }
+    },
+    "technical_depth": {
+      "type": "score",
+      "instructions": "How technical is the customer's description?",
+      "criteria": ["Non-technical", "Somewhat technical", "Highly technical"]
+    },
+    "blocked_completely": {
+      "type": "noul",
+      "instructions": "Is the customer completely unable to use the account?"
+    },
+    "followup_window": {
+      "type": "choice",
+      "instructions": "When should the agent follow up?",
+      "criteria": {
+        "within_hour": "Within one hour",
+        "same_day": "Same day",
+        "next_day": "Next business day",
+        "no_followup": "No follow-up"
+      }
+    },
+    "resolution_confidence": {
+      "type": "score",
+      "instructions": "How confident can the agent be that a manual unlock resolves this?",
+      "criteria": ["Low", "Medium", "High"]
+    },
+    "mentions_password_reset": {
+      "type": "noul",
+      "instructions": "Does the customer say the password reset succeeded?",
+      "criteria": {
+        "true": "The reset is described as successful",
+        "false": "The reset is not described as successful"
+      }
+    }
+  }
+}
