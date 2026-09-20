@@ -1,0 +1,5 @@
+category_id: load-and-slots
+title: Load measurement aligns semaphore with llama slots
+description: Load CLI, slot context split, defer queue, and VRAM limits for parallel measurement.
+created_at: 2026-09-20T01:17:47.0370692Z
+last_updated: 2026-09-20T01:17:47.0370692Z

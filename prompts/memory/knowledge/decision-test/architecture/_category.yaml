@@ -1,0 +1,5 @@
+category_id: architecture
+title: Decision-test uses llama-server behind a Jev-shaped single binary
+description: 'Architecture boundaries for the decision-test feature: llama-server backend, API shape, and direct readout.'
+created_at: 2026-09-20T01:17:46.5757873Z
+last_updated: 2026-09-20T01:17:46.5757873Z

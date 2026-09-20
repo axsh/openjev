@@ -1,0 +1,5 @@
+category_id: build-and-test
+title: Build one Windows exe and keep integration tags plus JSON order
+description: Build and test conventions for decision-test that are easy to miss from nearby code.
+created_at: 2026-09-20T01:17:46.741512Z
+last_updated: 2026-09-20T01:17:46.741512Z

@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "agent-record-result.schema.json",
+  "title": "Agent Record Result",
+  "description": "Result schema for tt agent record command",
+  "type": "object",
+  "required": ["status", "code"],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["accepted", "accepted_with_warnings", "rejected"]
+    },
+    "code": { "type": "string" },
+    "mode": {
+      "type": "string",
+      "enum": ["deferred"]
+    },
+    "event_id": { "type": "string" },
+    "instance_id": { "type": "string" },
+    "content_hash": { "type": "string" },
+    "content_id": { "type": "string" },
+    "stored_at": { "type": "string" },
+    "index_state": {
+      "type": "string",
+      "enum": ["ok", "degraded", "unavailable"]
+    },
+    "warnings": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "next_action": { "type": "string" },
+    "message": { "type": "string" }
+  },
+  "additionalProperties": false
+}
