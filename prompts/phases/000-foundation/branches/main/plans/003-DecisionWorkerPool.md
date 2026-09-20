@@ -513,7 +513,7 @@ None.（依頼者は `/create-implementation-plan -> /execute-implementation-pla
     *   Edit `settings/decision-test.yaml`: replace `llama_parallel: 1` with `workers: 16` and `stall_timeout_ms: 15000`.
     *   Edit `cmd/decision-test/main.go`: `engine.NewClient(cfg.LlamaURL, log, cfg.Workers)`（この時点ではプール未導入。コンパイルを通す）。
     *   Run `./scripts/process/build.sh`. Commit `feat(decision-test): replace llama semaphore with worker-sized connection pool settings`.
-3. [ ] **decision: プールと `Run` の置き換え、api の追随**
+3. [x] **decision: プールと `Run` の置き換え、api の追随**
     *   Add `internal/decision/pool_test.go` (`TestPoolMaxConcurrency`, `TestPoolSkipsCancelledTask`, `TestPoolStopsOnContext`).
     *   Edit `internal/decision/service_test.go`: new `fakeEngine`, `questionOf`, `newTestService`, revised `TestServiceBothOrder`, `TestServiceStallReturnsPartial`, `TestServiceProgressResetsTimer`, `TestServiceWithoutPool`, 2-question `TestServiceMissingLogit`.
     *   Add `internal/decision/pool.go`.

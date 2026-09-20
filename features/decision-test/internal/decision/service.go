@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
+	"time"
 
 	"openjev/features/decision-test/internal/domain"
 	"openjev/features/decision-test/internal/engine"
@@ -13,11 +15,19 @@ import (
 
 var ErrEngine = errors.New("engine")
 
+// defaultStallTimeout guards Services built without an explicit StallTimeout.
+const defaultStallTimeout = 15 * time.Second
+
 type Service struct {
 	Engine  engine.Engine
 	Labels  []engine.Label
 	Log     *logger.Logger
 	ModelID string
+	// Pool answers the questions of every request; see StartPool.
+	Pool *Pool
+	// StallTimeout is how long a handler waits without any submit or receive
+	// progress before it returns the answers collected so far.
+	StallTimeout time.Duration
 }
 
 type usage struct {
@@ -25,21 +35,80 @@ type usage struct {
 	out int
 }
 
+// StartPool creates the singleton pool backed by this service and starts its workers.
+func (s *Service) StartPool(ctx context.Context, workers int) {
+	s.Pool = newPool(workers, s.one, s.Log)
+	s.Pool.Start(ctx)
+}
+
+// Run submits one task per question to the pool and collects the answers from
+// a response channel private to this call. If neither the submitted nor the
+// received count changes for StallTimeout, it stops waiting and returns the
+// answers collected so far; missing question IDs are simply absent.
 func (s *Service) Run(ctx context.Context, req domain.Request) (domain.Response, error) {
 	state, err := req.State.PromptText()
 	if err != nil {
 		return domain.Response{}, err
 	}
-	resp := domain.Response{Model: req.Model, Answers: map[string]domain.Answer{}}
-	for _, question := range req.Questions {
-		answer, used, err := s.one(ctx, state, question, req.Method)
-		if err != nil {
-			return domain.Response{}, err
-		}
-		resp.Answers[question.ID] = answer
-		resp.Usage.InputTokens += used.in
-		resp.Usage.OutputTokens += used.out
+	if s.Pool == nil {
+		return domain.Response{}, errors.New("worker pool is not started")
 	}
+	stall := s.StallTimeout
+	if stall <= 0 {
+		stall = defaultStallTimeout
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	total := len(req.Questions)
+	results := make(chan result, total)
+	resp := domain.Response{Model: req.Model, Answers: map[string]domain.Answer{}}
+	submitted, received := 0, 0
+	timer := time.NewTimer(stall)
+	defer timer.Stop()
+	progress := func() {
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+		timer.Reset(stall)
+	}
+	start := time.Now()
+	for received < total {
+		var submit chan<- task // nil once every question is queued; a nil channel is never selected
+		var next task
+		if submitted < total {
+			submit = s.Pool.queue
+			next = task{ctx: ctx, state: state, question: req.Questions[submitted], method: req.Method, results: results}
+		}
+		select {
+		case submit <- next:
+			submitted++
+			progress()
+		case r := <-results:
+			received++
+			if r.err != nil {
+				return domain.Response{}, r.err
+			}
+			resp.Answers[r.id] = r.answer
+			resp.Usage.InputTokens += r.used.in
+			resp.Usage.OutputTokens += r.used.out
+			progress()
+		case <-timer.C:
+			missing := make([]string, 0, total-len(resp.Answers))
+			for _, question := range req.Questions {
+				if _, ok := resp.Answers[question.ID]; !ok {
+					missing = append(missing, question.ID)
+				}
+			}
+			s.Log.Warn("systemone stalled", "questions", total, "submitted", submitted, "received", received, "missing_ids", strings.Join(missing, ","), "stall_timeout_ms", stall.Milliseconds())
+			return resp, nil
+		case <-ctx.Done():
+			return domain.Response{}, ctx.Err()
+		}
+	}
+	s.Log.Debug("systemone completed", "questions", total, "answered", len(resp.Answers), "missing", total-len(resp.Answers), "duration_ms", float64(time.Since(start).Microseconds())/1000)
 	return resp, nil
 }
 

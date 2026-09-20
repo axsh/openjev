@@ -49,18 +49,20 @@ func main() {
 }
 
 type runtime struct {
-	srv *http.Server
-	log *logger.Logger
+	srv      *http.Server
+	log      *logger.Logger
+	stopPool context.CancelFunc
 }
 
 func (rt *runtime) listen(opts *serverOptions) error {
-	srv, log, err := buildServer(opts)
+	srv, log, stopPool, err := buildServer(opts)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return err
 	}
 	rt.srv = srv
 	rt.log = log
+	rt.stopPool = stopPool
 	return srv.ListenAndServe()
 }
 
@@ -71,6 +73,9 @@ func (rt *runtime) shutdown() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = rt.srv.Shutdown(ctx)
+	if rt.stopPool != nil {
+		rt.stopPool()
+	}
 }
 
 func serveCommand(rt *runtime) *cobra.Command {
@@ -177,10 +182,10 @@ func runLoad(opts *serverOptions, input, server, method string, concurrency, slo
 	}, os.Stdout, os.Stderr)
 }
 
-func buildServer(opts *serverOptions) (*http.Server, *logger.Logger, error) {
+func buildServer(opts *serverOptions) (*http.Server, *logger.Logger, context.CancelFunc, error) {
 	cfg, err := config.Load(opts.Config)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	if opts.Port != 0 {
 		cfg.APIPort = opts.Port
@@ -189,7 +194,7 @@ func buildServer(opts *serverOptions) (*http.Server, *logger.Logger, error) {
 	if cfg.LogPath != "" {
 		file, err := os.OpenFile(cfg.LogPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		output = file
 	}
@@ -197,6 +202,7 @@ func buildServer(opts *serverOptions) (*http.Server, *logger.Logger, error) {
 	eng := engine.NewClient(cfg.LlamaURL, log, cfg.Workers)
 	labels, labelErr := engine.ResolveLabels(context.Background(), eng)
 	var svc *decision.Service
+	var stopPool context.CancelFunc
 	readyErr := ""
 	if labelErr != nil {
 		readyErr = labelErr.Error()
@@ -205,8 +211,17 @@ func buildServer(opts *serverOptions) (*http.Server, *logger.Logger, error) {
 		readyErr = err.Error()
 		log.Error("warmup failed", "error", err)
 	} else {
-		svc = &decision.Service{Engine: eng, Labels: labels, Log: log, ModelID: cfg.ModelID}
-		log.Info("server starting", "api_port", cfg.APIPort, "model_id", cfg.ModelID, "llama_url", cfg.LlamaURL)
+		svc = &decision.Service{
+			Engine:       eng,
+			Labels:       labels,
+			Log:          log,
+			ModelID:      cfg.ModelID,
+			StallTimeout: time.Duration(cfg.StallTimeoutMs) * time.Millisecond,
+		}
+		var poolCtx context.Context
+		poolCtx, stopPool = context.WithCancel(context.Background())
+		svc.StartPool(poolCtx, cfg.Workers)
+		log.Info("server starting", "api_port", cfg.APIPort, "model_id", cfg.ModelID, "llama_url", cfg.LlamaURL, "workers", cfg.Workers, "stall_timeout_ms", cfg.StallTimeoutMs)
 	}
 	mux := http.NewServeMux()
 	humaAPI := humago.New(mux, huma.DefaultConfig("Decision Test", "0.0.1"))
@@ -216,6 +231,7 @@ func buildServer(opts *serverOptions) (*http.Server, *logger.Logger, error) {
 			Ready:          svc != nil && reachable && herr == nil,
 			Model:          cfg.ModelID,
 			LlamaReachable: reachable && herr == nil,
+			Workers:        cfg.Workers,
 			Error:          readyErr,
 		}
 		if herr != nil && h.Error == "" {
@@ -226,11 +242,14 @@ func buildServer(opts *serverOptions) (*http.Server, *logger.Logger, error) {
 			for _, label := range labels {
 				h.LabelTokenIDs[label.Letter] = label.TokenID
 			}
+			if svc.Pool != nil {
+				h.QueueDepth = svc.Pool.Depth()
+			}
 		}
 		return h
 	})
 	return &http.Server{
 		Addr:    fmt.Sprintf("%s:%d", cfg.APIHost, cfg.APIPort),
 		Handler: mux,
-	}, log, nil
+	}, log, stopPool, nil
 }

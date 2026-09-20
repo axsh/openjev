@@ -8,7 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2/humatest"
 
@@ -20,12 +22,12 @@ import (
 )
 
 type countingEngine struct {
-	calls int
+	calls atomic.Int32
 	miss  bool
 }
 
 func (e *countingEngine) ReadLabelLogprobs(ctx context.Context, messages []prompt.Message, labels []engine.Label) (engine.ReadResult, error) {
-	e.calls++
+	e.calls.Add(1)
 	if e.miss {
 		return engine.ReadResult{CompletionTokens: 1, ElapsedMs: 10}, nil
 	}
@@ -37,7 +39,7 @@ func (e *countingEngine) ReadLabelLogprobs(ctx context.Context, messages []promp
 }
 
 func (e *countingEngine) Generate(ctx context.Context, messages []prompt.Message) (engine.GenRaw, error) {
-	e.calls++
+	e.calls.Add(1)
 	return engine.GenRaw{}, nil
 }
 
@@ -51,19 +53,23 @@ func labels() []engine.Label {
 	return out
 }
 
-func newService(eng *countingEngine) *decision.Service {
-	return &decision.Service{
-		Engine:  eng,
-		Labels:  labels(),
-		Log:     logger.New(io.Discard),
-		ModelID: "minicpm5-2b-q4_k_m",
+func newService(t *testing.T, eng *countingEngine) *decision.Service {
+	t.Helper()
+	svc := &decision.Service{
+		Engine:       eng,
+		Labels:       labels(),
+		Log:          logger.New(io.Discard),
+		ModelID:      "minicpm5-2b-q4_k_m",
+		StallTimeout: time.Second,
 	}
+	svc.StartPool(t.Context(), 4)
+	return svc
 }
 
 func TestDirectAccount(t *testing.T) {
 	eng := &countingEngine{}
 	_, api := humatest.New(t)
-	Register(api, newService(eng), func(context.Context) domain.Health {
+	Register(api, newService(t, eng), func(context.Context) domain.Health {
 		return domain.Health{Ready: true, Model: "minicpm5-2b-q4_k_m"}
 	})
 	raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "account.json"))
@@ -117,19 +123,20 @@ func TestRejectsBeforeEngine(t *testing.T) {
 		criteriaN(21),
 		`{"state":"hello","questions":{"q":{"type":"rank","instructions":"Pick","criteria":{"a":"A","b":"B"}}}}`,
 		`{"state":"","questions":{"q":{"type":"choice","instructions":"Pick","criteria":{"a":"A","b":"B"}}}}`,
+		`{"state":"hello","questions":{"q":{"type":"choice","instructions":123,"criteria":{"a":"A","b":"B"}}}}`,
 	}
 	for _, body := range cases {
 		eng := &countingEngine{}
 		_, api := humatest.New(t)
-		Register(api, newService(eng), func(context.Context) domain.Health {
+		Register(api, newService(t, eng), func(context.Context) domain.Health {
 			return domain.Health{Ready: true}
 		})
 		resp := api.Post("/v1/systemone", "Content-Type: application/json", strings.NewReader(body))
 		if resp.Code != 422 {
 			t.Fatalf("status %d body %s for %s", resp.Code, resp.Body.String(), body)
 		}
-		if eng.calls != 0 {
-			t.Fatalf("engine calls %d", eng.calls)
+		if eng.calls.Load() != 0 {
+			t.Fatalf("engine calls %d", eng.calls.Load())
 		}
 	}
 }
@@ -137,14 +144,11 @@ func TestRejectsBeforeEngine(t *testing.T) {
 func TestMissingLogit502(t *testing.T) {
 	eng := &countingEngine{miss: true}
 	_, api := humatest.New(t)
-	Register(api, newService(eng), func(context.Context) domain.Health {
+	Register(api, newService(t, eng), func(context.Context) domain.Health {
 		return domain.Health{Ready: true}
 	})
-	raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "account.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp := api.Post("/v1/systemone", "Content-Type: application/json", strings.NewReader(string(raw)))
+	body := `{"state":"hello","questions":{"q1":{"type":"choice","instructions":"Pick one","criteria":{"a":"A","b":"B"}},"q2":{"type":"choice","instructions":"Pick two","criteria":{"a":"A","b":"B"}}}}`
+	resp := api.Post("/v1/systemone", "Content-Type: application/json", strings.NewReader(body))
 	if resp.Code != 502 || !strings.Contains(resp.Body.String(), "missing option logit for A") || !strings.Contains(resp.Body.String(), "detail") {
 		t.Fatalf("status %d body %s", resp.Code, resp.Body.String())
 	}
@@ -153,12 +157,15 @@ func TestMissingLogit502(t *testing.T) {
 func TestHealthStatus(t *testing.T) {
 	_, api := humatest.New(t)
 	ready := true
-	Register(api, newService(&countingEngine{}), func(context.Context) domain.Health {
-		return domain.Health{Ready: ready, Model: "minicpm5-2b-q4_k_m"}
+	Register(api, newService(t, &countingEngine{}), func(context.Context) domain.Health {
+		return domain.Health{Ready: ready, Model: "minicpm5-2b-q4_k_m", Workers: 16, QueueDepth: 0}
 	})
 	ok := api.Get("/health")
 	if ok.Code != 200 || !strings.Contains(ok.Body.String(), `"ready":true`) {
 		t.Fatalf("ready status %d body %s", ok.Code, ok.Body.String())
+	}
+	if !strings.Contains(ok.Body.String(), `"workers":16`) || !strings.Contains(ok.Body.String(), `"queue_depth":0`) {
+		t.Fatalf("pool fields missing: %s", ok.Body.String())
 	}
 	ready = false
 	down := api.Get("/health")
@@ -167,10 +174,41 @@ func TestHealthStatus(t *testing.T) {
 	}
 }
 
+func TestPlaygroundFixture(t *testing.T) {
+	eng := &countingEngine{}
+	_, api := humatest.New(t)
+	Register(api, newService(t, eng), func(context.Context) domain.Health { return domain.Health{Ready: true} })
+	raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "playground.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp := api.Post("/v1/systemone", "Content-Type: application/json", strings.NewReader(string(raw)))
+	if resp.Code != 200 {
+		t.Fatalf("status %d %s", resp.Code, resp.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(resp.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	answers := body["answers"].(map[string]any)
+	if len(answers) != 3 {
+		t.Fatalf("answers %d", len(answers))
+	}
+	for id, want := range map[string]string{"department": "choice", "urgency": "score", "wants_refund": "noul"} {
+		ans, ok := answers[id].(map[string]any)
+		if !ok || ans["type"] != want {
+			t.Fatalf("%s = %#v", id, answers[id])
+		}
+	}
+	if eng.calls.Load() != 3 {
+		t.Fatalf("engine calls %d", eng.calls.Load())
+	}
+}
+
 func TestScoreAndNoulDirect(t *testing.T) {
 	eng := &countingEngine{}
 	_, api := humatest.New(t)
-	Register(api, newService(eng), func(context.Context) domain.Health { return domain.Health{Ready: true} })
+	Register(api, newService(t, eng), func(context.Context) domain.Health { return domain.Health{Ready: true} })
 	raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "score.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -219,10 +257,10 @@ func TestRejectFixtures(t *testing.T) {
 		}
 		eng := &countingEngine{}
 		_, api := humatest.New(t)
-		Register(api, newService(eng), func(context.Context) domain.Health { return domain.Health{Ready: true} })
+		Register(api, newService(t, eng), func(context.Context) domain.Health { return domain.Health{Ready: true} })
 		resp := api.Post("/v1/systemone", "Content-Type: application/json", strings.NewReader(string(raw)))
-		if resp.Code != 422 || eng.calls != 0 {
-			t.Fatalf("%s status %d calls %d", name, resp.Code, eng.calls)
+		if resp.Code != 422 || eng.calls.Load() != 0 {
+			t.Fatalf("%s status %d calls %d", name, resp.Code, eng.calls.Load())
 		}
 	}
 }
