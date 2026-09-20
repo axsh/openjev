@@ -530,7 +530,7 @@ None.（依頼者は `/create-implementation-plan -> /execute-implementation-pla
     *   Edit `tests/decision_systemone_test.go`: `loadReport`, `writeOwnedConfig`, `runLoad`, `TestDecisionSystemOne_Load` update, `TestDecisionSystemOne_Batch`, `TestDecisionSystemOne_Mixed` per-ID order, `TestDecisionSystemOne_Playground`.
     *   Edit `README.md` (Documentation 節).
     *   Run `./scripts/process/build.sh`. Commit `test(decision-test): add question-count batch benchmark and relax per-question log order`.
-6. [ ] **Verification Plan の実行**（下記）。統合テストの結果と総合判定を本計画の末尾に記録し、コミットする。
+6. [x] **Verification Plan の実行**（下記）。統合テストの結果と総合判定を本計画の末尾に記録し、コミットする。
 
 ## Verification Plan
 
@@ -600,3 +600,60 @@ None.（依頼者は `/create-implementation-plan -> /execute-implementation-pla
     *   "Load" 節: `--questions N`（先頭 N 質問）と `--workers M`（ラベル）を追加し、質問数 × スロット数の例コマンドと、集計キー `questions`, `answers`, `answers_missing`, `questions_per_sec` を説明。`--slots` / `--workers` がラベルである旨。`direct_ms` がワーカー数 > スロット数のとき llama 側の待ちを含むこと。
     *   新節 "Partial answers": ハンドラ単位の停滞判定（`stall_timeout_ms`）で欠けた ID は `answers` から抜け、HTTP 200 のまま WARN `systemone stalled` が出ること。HTTP 同時数が大きく FIFO の待ちが長い場合にも起きること。
     *   "Tests" 節: Batch ベンチマークのコマンドを追加。
+
+## 検証結果 (2026-09-21)
+
+### 単体テストとビルド
+
+`./scripts/process/build.sh` PASS。8 パッケージ（api, cli, config, decision, domain, engine, logger, prompt）の単体テストが通り `bin/decision-test.exe` を出力。`internal/decision` は `-race` でも PASS（テスト側のログバッファを mutex 付きに修正した）。停滞テストは 0.20 s、進捗テストは 0.75 s。
+
+### 統合テスト
+
+実行環境: RTX 3070 Laptop 8 GB、llama.cpp b11056、MiniCPM5-2B Q4_K_M。この機材では 18080 が `ssh.exe`（ポート転送）に占有されており、利用者の llama-server は 18081 で稼働していた（`tmp/decision-test.yaml.local` と一致）。利用者側 llama を使うテストは `settings/decision-test.yaml` の `llama_url` / `llama_port` を一時的に 18081 へ向けて実行し、実行後に `git checkout` で戻した（コミット差分なし）。
+
+| コマンド | 結果 |
+| --- | --- |
+| `--specify "TestDecisionSystemOne_Batch\|TestDecisionSystemOne_Load"`（自前 llama 18280 / API 18199） | PASS（Load 27.9 s、Batch 44.4 s） |
+| `--specify "TestDecisionSystemOne_DirectAccount\|TestDecisionSystemOne_Mixed\|TestDecisionSystemOne_Playground\|TestDecisionSystemOne_BothOrder"` | PASS（4 件） |
+| `--specify 'TestDecisionSystemOne_(Health\|GenerationEmail\|Score\|Noul\|NoulDefaultCriteria)$'` | PASS（5 件） |
+
+`TestDecisionSystemOne_Load`（`workers = slots`、account.json 1 質問、HTTP 同時数）: 12 セルすべて 200、`answers == n`、`answers_missing 0`。throughput_rps はスロット 1 で 15.7 / 23.6 / 24.2 / 25.2、スロット 2 で 16.8 / 25.3 / 28.5 / 28.1、スロット 4 で 16.4 / 30.0 / 34.5 / 35.1（concurrency 1 / 10 / 50 / 100）。
+
+`TestDecisionSystemOne_Batch`（`workers 30`、bank.json、concurrency 1）: 36 セルすべて 200、`answers == n`、`answers_missing 0`、n = 30 の最中に `/health` が 200 で `workers 30`、API ログに `level=ERROR` と `systemone stalled` なし。`wall_ms` / `questions_per_sec`:
+
+| slots \ n | 1 | 5 | 10 | 15 | 20 | 30 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 59 / 16.9 | 249 / 20.1 | 441 / 22.7 | 667 / 22.5 | 841 / 23.8 | 1263 / 23.8 |
+| 2 | 57 / 17.6 | 240 / 20.9 | 476 / 21.0 | 675 / 22.2 | 892 / 22.4 | 1569 / 19.1 |
+| 3 | 58 / 17.4 | 312 / 16.0 | 500 / 20.0 | 659 / 22.8 | 897 / 22.3 | 1370 / 21.9 |
+| 4 | 59 / 17.1 | 251 / 19.9 | 497 / 20.1 | 769 / 19.5 | 1196 / 16.7 | 1349 / 22.2 |
+| 5 | 57 / 17.6 | 247 / 20.2 | 464 / 21.6 | 693 / 21.6 | 874 / 22.9 | 1367 / 21.9 |
+| 6 | 57 / 17.4 | 240 / 20.9 | 471 / 21.3 | 806 / 18.6 | 972 / 20.6 | 1441 / 20.8 |
+
+読み取り: 1 リクエストの所要時間は質問数にほぼ比例し（30 質問で約 1.3 秒、約 42 ms / 質問）、スロット数 1〜6 で差が出ない。direct 読み出しはプリフィル計算が律速で、llama-server のスロット単位バッチは GPU 利用率を上げていない。`direct_ms_sum` は n = 30 で 20〜25 秒に達し、`workers` がスロット数を超えたぶん llama 側の待ちを含むことを裏付ける（README に記載済み）。仕様どおり比例は合格線にしていない。
+
+追加計測（テストではなく手動、`-np 4` の llama に対して同じ bank.json、各 3 回）: `workers 4` は 30 質問で 1212〜1257 ms（23.9〜24.7 q/s）、`workers 30` は 1297〜1305 ms（23.0〜23.1 q/s）。in-flight をスロット数に絞っても速くならず、超えても遅くならない。`direct_ms_sum` だけが 4.7 秒 対 22 秒と違う（待ち場所が Go 側かどうかの差）。
+
+### 総合判定結果
+
+**判定**: ✅ 動作確認完了
+
+#### テスト結果サマリ
+- 単体テスト: 8 パッケージ PASS（新規 20 件超を含む）
+- 統合テスト: 11 テスト関数 PASS（Load 12 セル、Batch 36 セル、退行 9 件）
+- 失敗: 0 件
+- 事実上スキップ: 0 件
+
+#### チェック項目の結果
+| # | チェック項目 | 結果 | 備考 |
+|---|------------|------|------|
+| 1 | スキップされたテスト | ✅ | `t.Skip` 不使用。前提不足は `t.Fatal`。Batch のスロット 3, 5, 6 も起動・推論とも成功 |
+| 2 | 部分的なエラー | ✅ | Batch / Load の API ログに `level=ERROR`、`systemone stalled` なし（`assertCleanAPILog`）。手動計測の初回は実験スクリプト側の待機条件不備で API がラベル解決前に起動しただけで、待機を直して再計測した |
+| 3 | 迂回による偽成功 | ✅ | `TestServiceWithoutPool` が直列フォールバックの不在を固定。`TestPoolMaxConcurrency` / `TestConcurrentReadsNotSerialized` で並列を確認。Batch の `direct_ms_sum >> wall_ms` は 30 質問が同時に llama へ出ている証拠 |
+| 4 | アダプタ・コンフィグの誤適用 | ✅ | Batch / Load は `workers` を書いた設定で 18199 に起動し、health の `"workers":30` / `"workers":<slots>` を確認。退行は利用者 llama（18081）で実行、設定は復元済み |
+| 5 | テスト間の順序依存 | ✅ | `-count=1`、テストごとに固有ポート（18189〜18199、18280）と自前プロセス |
+| 6 | カバレッジ | ✅ | `pool.go`、`Run`（投入・回収・停滞・エラー・切断）、`Text` / `instructions`、`TakeQuestions`、`load` 集計と終了コード、`--questions` / `--workers`、health フィールド、フィクスチャ検証 |
+| 7 | 外部システムの状態 | ✅ | GGUF と `llama-server.exe` 実在。18080 は ssh に占有されていたため 18081 を使用。VRAM はスロット 6 でも問題なし |
+
+#### 判定理由
+36 セルすべてで 1 リクエストの n 質問が欠けなく 200 で返り、停滞の切り上げは本番経路で一度も起きず、単体テストでは 200 ms のタイマーどおりに切り上げと ctx cancel が動いた。002 の HTTP 同時数の受理も `workers = slots` で保たれた。スループットがスロット数に比例しない点は仕様の合格線外だが、次の仕様（共有 `state` 接頭辞のプロンプトキャッシュ）の必要性を示す計測結果として記録する。
