@@ -1,0 +1,70 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "skip.schema.json",
+  "title": "Skip Definition",
+  "description": "Schema for skip entities (not deployed to targets).",
+  "type": "object",
+  "required": [
+    "apiVersion",
+    "kind",
+    "id",
+    "title"
+  ],
+  "properties": {
+    "apiVersion": {
+      "type": "string",
+      "const": "agent.meta/v1"
+    },
+    "kind": {
+      "type": "string",
+      "const": "skip"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+    },
+    "title": {
+      "type": "string"
+    },
+    "scope": {
+      "type": "string",
+      "enum": [
+        "project",
+        "path",
+        "module"
+      ]
+    },
+    "activation": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "body": {
+      "type": "string"
+    },
+    "tags": {
+      "description": "Selection tags for compile/deploy/update filtering. If omitted, the entity implicitly has the 'baseline' tag. Explicit tags replace the implicit baseline; include 'baseline' explicitly when needed. Empty arrays are forbidden.",
+      "oneOf": [
+        {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+          "minLength": 1
+        },
+        {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+            "minLength": 1
+          }
+        }
+      ]
+    }
+  },
+  "additionalProperties": false
+}

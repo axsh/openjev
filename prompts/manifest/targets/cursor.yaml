@@ -1,0 +1,11 @@
+apiVersion: agent.meta/v1
+kind: target
+id: cursor
+includes:
+  policy: true
+  capability: true
+  procedure: true
+  subagent: false
+paths:
+  rules: .cursor/rules/
+  skills: .cursor/skills/

@@ -1,0 +1,11 @@
+apiVersion: agent.meta/v1
+kind: guard
+id: protect-generated-files
+title: Protect Generated Files
+description: Prevent manual editing of generated files to maintain single source of truth.
+event: file_write
+action: deny
+paths:
+  - .agent/rules/**
+  - .agent/skills/**
+  - .agent/workflows/**

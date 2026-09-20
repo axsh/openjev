@@ -1,0 +1,9 @@
+apiVersion: agent.meta/v1
+kind: guard
+id: deny-direct-edit-of-index
+title: Deny Direct Edit of Index
+description: Prohibit direct editing of prompts/memory/index.md.
+event: file_write
+action: deny
+paths:
+  - prompts/memory/index.md

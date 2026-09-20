@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "guard.schema.json",
+  "title": "Guard Definition",
+  "type": "object",
+  "required": ["apiVersion", "kind", "id", "title", "event", "action"],
+  "properties": {
+    "apiVersion": { "type": "string", "const": "agent.meta/v1" },
+    "kind": { "type": "string", "const": "guard" },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+    },
+    "title": { "type": "string" },
+    "description": { "type": "string" },
+    "event": { "type": "string" },
+    "action": { "type": "string" },
+    "paths": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "additionalProperties": false
+}

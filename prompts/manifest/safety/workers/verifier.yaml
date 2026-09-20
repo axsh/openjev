@@ -1,0 +1,6 @@
+apiVersion: agent.meta/v1
+kind: worker
+id: verifier
+title: Verifier Worker
+description: Specialized worker to verify consistency between manifest and codebase.
+capability: manifest_verification

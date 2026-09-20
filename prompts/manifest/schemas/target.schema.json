@@ -1,0 +1,75 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "target.schema.json",
+  "title": "Target Definition",
+  "type": "object",
+  "required": ["apiVersion", "kind", "id", "paths"],
+  "properties": {
+    "apiVersion": { "type": "string", "const": "agent.meta/v1" },
+    "kind": { "type": "string", "const": "target" },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+    },
+    "includes": {
+      "type": "object",
+      "properties": {
+        "policy": { "type": "boolean" },
+        "capability": { "type": "boolean" },
+        "procedure": { "type": "boolean" },
+        "subagent": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "capabilities": {
+      "type": "object",
+      "properties": {
+        "rules": { "type": "boolean" },
+        "skills": { "type": "boolean" },
+        "workflows": { "type": "boolean" },
+        "subagents": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "paths": {
+      "type": "object",
+      "properties": {
+        "rules": { "type": "string" },
+        "skills": { "type": "string" },
+        "workflows": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "limits": {
+      "type": "object",
+      "properties": {
+        "rules": { "$ref": "#/$defs/categoryLimit" },
+        "skills": { "$ref": "#/$defs/categoryLimit" },
+        "workflows": { "$ref": "#/$defs/categoryLimit" }
+      },
+      "additionalProperties": false
+    },
+    "index_file": {
+      "type": "string",
+      "description": "Path to the index file for this target (e.g. AGENTS.md)."
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "categoryLimit": {
+      "type": "object",
+      "properties": {
+        "max_file_size": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum file size in bytes"
+        },
+        "on_exceed": {
+          "type": "string",
+          "description": "Action when limit is exceeded: error, warn, truncate, skip, or bash:<script_path>"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

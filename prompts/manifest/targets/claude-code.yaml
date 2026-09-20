@@ -1,0 +1,11 @@
+apiVersion: agent.meta/v1
+kind: target
+id: claude-code
+includes:
+  policy: true
+  capability: true
+  procedure: true
+  subagent: false
+paths:
+  rules: .claude/rules/
+  skills: .claude/skills/

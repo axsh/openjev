@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "worker.schema.json",
+  "title": "Worker Definition",
+  "type": "object",
+  "required": ["apiVersion", "kind", "id", "title", "capability"],
+  "properties": {
+    "apiVersion": { "type": "string", "const": "agent.meta/v1" },
+    "kind": { "type": "string", "const": "worker" },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+    },
+    "title": { "type": "string" },
+    "description": { "type": "string" },
+    "capability": { "type": "string" }
+  },
+  "additionalProperties": false
+}

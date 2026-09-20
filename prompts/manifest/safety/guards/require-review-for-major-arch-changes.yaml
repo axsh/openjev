@@ -1,0 +1,10 @@
+apiVersion: agent.meta/v1
+kind: guard
+id: require-review-for-major-arch-changes
+title: Require Review for Major Architecture Changes
+description: Enforce human review when editing major architecture documents.
+event: file_write
+action: require_review
+paths:
+  - prompts/memory/invariants.md
+  - prompts/memory/decisions.md

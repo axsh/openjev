@@ -1,0 +1,16 @@
+apiVersion: agent.meta/v1
+kind: target
+id: antigravity
+includes:
+  policy: true
+  capability: true
+  procedure: true
+  subagent: false
+paths:
+  rules: .agent/rules/
+  skills: .agent/skills/
+  workflows: .agent/workflows/
+limits:
+  rules:
+    max_file_size: 12000
+    on_exceed: warn

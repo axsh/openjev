@@ -1,0 +1,21 @@
+version: 1
+project_id: vv5
+
+sources:
+  policies: prompts/manifest/code_content/policies/**/*.md
+  procedures: prompts/manifest/code_content/procedures/**/*.md
+  capabilities: prompts/manifest/code_content/capabilities/**/*.md
+  refs: prompts/manifest/code_content/refs/**/*.md
+  guards: prompts/manifest/safety/guards/**/*.yaml
+  workers: prompts/manifest/safety/workers/**/*.yaml
+  bundles: prompts/manifest/safety/bundles/**/*.yaml
+  targets: prompts/manifest/targets/**/*.yaml
+  memory_docs: prompts/memory/**/*.md
+
+outputs:
+  resolved_manifest: tmp/dist/manifest.resolved.yaml
+
+defaults:
+  language: ja
+  generated_banner: true
+  build_dir: tmp/dist/

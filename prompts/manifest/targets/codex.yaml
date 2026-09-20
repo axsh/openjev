@@ -1,0 +1,12 @@
+apiVersion: agent.meta/v1
+kind: target
+id: codex
+includes:
+  policy: true
+  capability: true
+  procedure: true
+  subagent: false
+paths:
+  rules: .codex/rules/
+  skills: .codex/skills/
+index_file: CODEX.md
