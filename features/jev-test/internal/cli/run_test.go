@@ -33,7 +33,7 @@ func TestRunSuccessText(t *testing.T) {
 	if hits != 1 {
 		t.Fatalf("hits %d", hits)
 	}
-	if sent["model"] != "typesafe/jev-1.13" {
+	if sent["model"] != "jev-latest" {
 		t.Fatalf("model %#v", sent["model"])
 	}
 	lines := strings.Split(strings.TrimSuffix(stdout.String(), "\n"), "\n")

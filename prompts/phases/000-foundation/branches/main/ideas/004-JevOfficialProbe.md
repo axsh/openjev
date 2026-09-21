@@ -30,7 +30,7 @@ API キーは、リポジトリにコミットしない `tmp/typesafe-api-key.tx
    - `--input`。省略時は `features/decision-test/testdata/bank.json`。
    - `--key-file`。省略時は `tmp/typesafe-api-key.txt`。
    - `--url`。省略時は `https://api.typesafe.ai/v1/systemone`。
-   - `--model`。省略時は `typesafe/jev-1.13`。入力 JSON に空でない `model` が既にあるときは、その値を優先し、このフラグでは上書きしない。
+   - `--model`。省略時は `jev-latest`。入力 JSON に空でない `model` が既にあるときは、その値を優先し、このフラグでは上書きしない。`GET /v1/models` が返す名前は `jev-latest` と `jev-preview` である。Playground の `typesafe/jev-1.13` は、このエンドポイントでは未知のモデルとして 400 になる。
    - `--timeout`。省略時は 10 分。`features/decision-test` の `decide` と同じ長さである。
    - `--json`。付けると、stdout には結果オブジェクト 1 つだけを書く。
    - 送る HTTP リクエストは 1 回だけである。質問の分割、並列化、429 や 529 の再試行はしない。再試行は計測する所要時間を歪める。
@@ -86,7 +86,7 @@ API キーは、リポジトリにコミットしない `tmp/typesafe-api-key.tx
 
 ## 実現方針 (Implementation Approach)
 
-既定の送り先は TypeSafe のネイティブエンドポイントとする。キーファイル名が `typesafe-api-key.txt` であることと、[Playground のパラメータ](https://www.jevai.org/docs) が `model` / `state` / `questions` であることに合わせる。モデルの既定文字列 `typesafe/jev-1.13` は Playground が固定している ID である。サーバが未知のモデルとして拒否した場合、プログラムはモデル名を自動で切り替えない。計測が 1 回でなくなるためである。そのときは `--model` を変えて、人がもう一度実行する。
+既定の送り先は TypeSafe のネイティブエンドポイントとする。キーファイル名が `typesafe-api-key.txt` であることと、[Playground のパラメータ](https://www.jevai.org/docs) が `model` / `state` / `questions` であることに合わせる。モデルの既定文字列 `jev-latest` は、`GET https://api.typesafe.ai/v1/models` が返す現行 ID である。Playground ページの `typesafe/jev-1.13` は、この API では未知のモデルになる。サーバが未知のモデルとして拒否した場合、プログラムはモデル名を自動で切り替えない。計測が 1 回でなくなるためである。そのときは `--model` を変えて、人がもう一度実行する。
 
 ```mermaid
 flowchart LR
@@ -120,7 +120,7 @@ go run ./cmd/jev-test
 
 実行時のカレントディレクトリは `features/jev-test` ではなくリポジトリルートでも動くこと。省略時パスはカレントディレクトリ相対なので、このシナリオのカレントディレクトリはリポジトリルートとする。
 
-4. プログラムはキーを読み、`bank.json` の 30 質問を 1 つの JSON として本家へ 1 回 POST する。入力ファイルに `model` が無いので、送信コピーにだけ `typesafe/jev-1.13` を入れる。
+4. プログラムはキーを読み、`bank.json` の 30 質問を 1 つの JSON として本家へ 1 回 POST する。入力ファイルに `model` が無いので、送信コピーにだけ `jev-latest` を入れる。
 5. 送信直前から本文を読み終わるまでの `wall_ms` を stdout に書く。
 6. 返った `answers` を、送った 30 件の ID と型に照らして確認し、`content_ok` と、質問ごとの値を stdout に書く。
 7. HTTP 成功かつ `content_ok` が true のとき、プロセスの終了コードは 0 である。
@@ -134,7 +134,7 @@ go run ./cmd/jev-test
 
 | 要件 | テスト |
 | --- | --- |
-| 1 と 4。30 質問を 1 本文で送り、入力ファイルを書き換えない | `internal/probe`。`bank.json` を読み、`httptest` が受けた JSON の質問数が 30、`model` が `typesafe/jev-1.13`、元ファイルに `model` キーが無いこと |
+| 1 と 4。30 質問を 1 本文で送り、入力ファイルを書き換えない | `internal/probe`。`bank.json` を読み、`httptest` が受けた JSON の質問数が 30、`model` が `jev-latest`、元ファイルに `model` キーが無いこと |
 | 2。リクエストは 1 回 | 同じテストで、ハンドラの呼び出し回数が 1 |
 | 3。Bearer を付け、トークンをエラーに出さない | ハンドラが 401 と固定本文を返す。送った `Authorization` は期待する Bearer と一致し、エラー文字列にトークンが無い |
 | 5。`wall_ms` が本文読了までを含む | ハンドラが短時間待ってから本文を返す。`wall_ms` がその待ち以上 |

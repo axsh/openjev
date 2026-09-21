@@ -18,7 +18,7 @@ func TestLoadBankInjectsModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	loaded, err := Load(path, "typesafe/jev-1.13")
+	loaded, err := Load(path, "jev-latest")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +46,7 @@ func TestLoadBankInjectsModel(t *testing.T) {
 	if len(qs) != 30 {
 		t.Fatalf("sent questions %d", len(qs))
 	}
-	if doc["model"] != "typesafe/jev-1.13" {
+	if doc["model"] != "jev-latest" {
 		t.Fatalf("model %#v", doc["model"])
 	}
 }
@@ -69,7 +69,7 @@ func TestLoadRejects(t *testing.T) {
 			if err := os.WriteFile(path, []byte(tt.body), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := Load(path, "typesafe/jev-1.13"); err == nil || !strings.Contains(err.Error(), tt.want) {
+			if _, err := Load(path, "jev-latest"); err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("err %v", err)
 			}
 		})

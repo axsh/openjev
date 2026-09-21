@@ -164,7 +164,7 @@ func TestPostKeepsTokenOutOfError(t *testing.T)
 ```
 
 *   **Logic**:
-    *   `TestLoadBankInjectsModel`: `../../../decision-test/testdata/bank.json` を読む（パッケージディレクトリからの相対。`go test` のカレントはパッケージディレクトリ）。送信バイトの `questions` は 30、`model` は `typesafe/jev-1.13`。読み込み後にファイルを読み直し、`model` キーが無いこと、バイト列が呼び出し前と一致すること。質問スライス長 30。先頭 ID は `queue`、型は `choice`。`ChoiceKeys` は空でない。
+    *   `TestLoadBankInjectsModel`: `../../../decision-test/testdata/bank.json` を読む（パッケージディレクトリからの相対。`go test` のカレントはパッケージディレクトリ）。送信バイトの `questions` は 30、`model` は `jev-latest`。読み込み後にファイルを読み直し、`model` キーが無いこと、バイト列が呼び出し前と一致すること。質問スライス長 30。先頭 ID は `queue`、型は `choice`。`ChoiceKeys` は空でない。
     *   `TestLoadRejects`: テーブル。`{}` は `state`。`{"state":"x"}` は `questions`。`{"state":"x","questions":{}}` は `questions`。`{"state":"","questions":{"q":{"type":"noul","instructions":"y"}}}` は `state`。壊れた JSON はエラー。いずれもエラーで、ファイルを書く関数は無い。
     *   `TestReadKey`: ファイル内容が `"  tok en \n"` のときトークンは `"tok en"`（両端の空白だけ除き、中の空白は残す）。空ファイルはエラー。
     *   `TestPostOnceMeasuresWall`: httptest が 50ms 待ってから `{"ok":true}` を 200 で返す。呼び出し回数 1。`Authorization` は `Bearer probe-token`。`Content-Type` は `application/json`。本文は送ったバイトと一致。`WallMs >= 50`。`Status == 200`。
@@ -224,7 +224,7 @@ func TestRunBadInput(t *testing.T)
 
 *   **Logic**:
     *   入力は temp に書く 1 質問 noul。`{"state":"hello","questions":{"is_urgent":{"type":"noul","instructions":"now?"}}}`。`model` は書かない。
-    *   `TestRunSuccessText`: httptest が `{"model":"jev-1.13.0","answers":{"is_urgent":{"type":"noul","noul":0.95}},"elapsedMs":1200}` を返す。キーファイルは `"k\n"`。`Run` の引数は `--input` `--key-file` `--url` `--timeout 5s`。終了コード 0。stdout の行順は `status: 200`、`wall_ms:` で始まる行、`server_elapsed_ms: 1200`、`model: jev-1.13.0`、`questions: 1`、`content_ok: true`、その次が `is_urgent type=noul noul=0.95`。`usage_` 行は無い。httptest のヒット数は 1。送られた JSON の `model` は `typesafe/jev-1.13`。
+    *   `TestRunSuccessText`: httptest が `{"model":"jev-1.13.0","answers":{"is_urgent":{"type":"noul","noul":0.95}},"elapsedMs":1200}` を返す。キーファイルは `"k\n"`。`Run` の引数は `--input` `--key-file` `--url` `--timeout 5s`。終了コード 0。stdout の行順は `status: 200`、`wall_ms:` で始まる行、`server_elapsed_ms: 1200`、`model: jev-1.13.0`、`questions: 1`、`content_ok: true`、その次が `is_urgent type=noul noul=0.95`。`usage_` 行は無い。httptest のヒット数は 1。送られた JSON の `model` は `jev-latest`。
     *   `TestRunSuccessJSON`: 同じ応答に `"usage":{"input_tokens":3,"output_tokens":1}` を足す。`--json`。stdout は 1 JSON。`wall_ms > 0`、`questions == 1`、`content_ok == true`、`status == 200`、`server_elapsed_ms == 1200`、`usage.input_tokens == 3`、`answers.is_urgent.noul == 0.95`。stdout にトークンは無い。
     *   `TestRunHTTPError`: 401 本文 `denied`。終了コード 1。stderr に `401` と `denied`。stdout と stderr にトークン `sekret-token-value` は無い。内容確認の回答行は stdout に無い。
     *   `TestRunEmptyKey`: キーファイルは空。終了コード 2。ヒット数 0。
@@ -254,7 +254,7 @@ func Run(args []string, stdout, stderr io.Writer, log *logger.Logger) int
 ```
 
 *   **Logic**:
-    *   `flag.NewFlagSet("jev-test", flag.ContinueOnError)`。出力先は `stderr`。既定は `--input features/decision-test/testdata/bank.json`、`--key-file tmp/typesafe-api-key.txt`、`--url https://api.typesafe.ai/v1/systemone`、`--model typesafe/jev-1.13`、`--timeout 10m`、`--json` false。パース失敗は 2。
+    *   `flag.NewFlagSet("jev-test", flag.ContinueOnError)`。出力先は `stderr`。既定は `--input features/decision-test/testdata/bank.json`、`--key-file tmp/typesafe-api-key.txt`、`--url https://api.typesafe.ai/v1/systemone`、`--model jev-latest`、`--timeout 10m`、`--json` false。パース失敗は 2。
     *   `ReadKey` または `Load` が失敗したら stderr にエラー 1 行、return 2。この時点では POST しない。
     *   DEBUG `probe starting` に `url`、`model`、`input`、`questions`、`key_file`（パスのみ）。
     *   `Post` を 1 回。`err != nil` なら ERROR `post failed`（`error`、`duration_ms`、`url`）。stderr にエラー。return 1。
@@ -298,7 +298,7 @@ func TestJevProbe_BinaryUsage(t *testing.T)
 *   **Logic**:
     *   バイナリは `filepath.Join(repoRoot, "bin", "jev-test.exe")`（`runtime.GOOS != "windows"` のときは拡張子なし）。無いときは `t.Fatal`。`t.Skip` は使わない。
     *   `cmd.Dir` はリポジトリルート。`--input` は付けず、既定の `features/decision-test/testdata/bank.json` を使わせる。`--key-file` は temp。中身は `probe-token`。実キーファイルは読ませない。
-    *   `TestJevProbe_BinaryPostsBankOnce`: ハンドラは受けた `questions` から妥当な回答を作って 200 で返す（choice は最初のキー、確率はそのキーだけ 1 で残り 0、confidence 1。score は 0、確率 `"0"` が 1、legend `{}`。noul は 0.5）。`model` は `jev-1.13.0`、`elapsedMs` は 10、`usage` は両トークン 1。引数は `--url`、`--key-file`、`--json`、`--timeout 30s`。終了コード 0。ヒット数 1。`Authorization` は `Bearer probe-token`。受けた JSON の質問数 30、`model` は `typesafe/jev-1.13`。実行後の `bank.json` に `model` キーが無い。stdout の `wall_ms > 0`、`questions == 30`、`content_ok == true`、`status == 200`。
+    *   `TestJevProbe_BinaryPostsBankOnce`: ハンドラは受けた `questions` から妥当な回答を作って 200 で返す（choice は最初のキー、確率はそのキーだけ 1 で残り 0、confidence 1。score は 0、確率 `"0"` が 1、legend `{}`。noul は 0.5）。`model` は `jev-1.13.0`、`elapsedMs` は 10、`usage` は両トークン 1。引数は `--url`、`--key-file`、`--json`、`--timeout 30s`。終了コード 0。ヒット数 1。`Authorization` は `Bearer probe-token`。受けた JSON の質問数 30、`model` は `jev-latest`。実行後の `bank.json` に `model` キーが無い。stdout の `wall_ms > 0`、`questions == 30`、`content_ok == true`、`status == 200`。
     *   `TestJevProbe_BinaryRejectsUnauthorized`: 401 本文 `denied`。終了コード 1。stdout と stderr に `probe-token` は無く、stderr に `401` と `denied` がある。
     *   `TestJevProbe_BinaryUsage`: キーファイルは空文字。終了コード 2。ヒット数 0。
 
@@ -314,24 +314,24 @@ func TestJevProbe_BinaryUsage(t *testing.T)
 
 各ステップは「テストを書く → `./scripts/process/build.sh` がコンパイルまたはアサートで失敗することを確認 → 実装 → 同じスクリプトが通る → コミット」。
 
-1. [ ] **check**
+1. [x] **check**
     *   Add `features/jev-test/go.mod`.
     *   Add `features/jev-test/internal/logger/logger.go`（check はログしないが、後段のパッケージが使う。このステップではテストしない）。
     *   Add `features/jev-test/internal/check/check_test.go`。実装が無い状態で `./scripts/process/build.sh` が失敗することを確認する。
     *   Add `features/jev-test/internal/check/check.go`。
     *   Run `./scripts/process/build.sh`. Commit `feat(jev-test): check official Jev answer shape`.
-2. [ ] **probe**
+2. [x] **probe**
     *   Add `features/jev-test/internal/probe/probe_test.go`。失敗を確認する。
     *   Add `features/jev-test/internal/probe/probe.go`。
     *   Run `./scripts/process/build.sh`. Commit `feat(jev-test): post one bank.json request and measure wall time`.
-3. [ ] **cli と main**
+3. [x] **cli と main**
     *   Add `features/jev-test/internal/cli/run_test.go`。失敗を確認する。
     *   Add `features/jev-test/internal/cli/run.go` と `features/jev-test/cmd/jev-test/main.go`。
     *   Run `./scripts/process/build.sh`. `bin/jev-test.exe`（Windows）が出来る。Commit `feat(jev-test): add CLI for one official Jev probe`.
-4. [ ] **統合テストと README**
+4. [x] **統合テストと README**
     *   Add `tests/jev_probe_test.go`. Edit `README.md`.
     *   Run `./scripts/process/build.sh`. Commit `test(jev-test): probe the built binary against a local server`.
-5. [ ] **Verification Plan**（下記）。公式 1 回の `wall_ms` と `content_ok` を、キー値を書かずに本計画の末尾へ記録し、コミットする。
+5. [x] **Verification Plan**（下記）。公式 1 回の `wall_ms` と `content_ok` を、キー値を書かずに本計画の末尾へ記録し、コミットする。
 
 ## Verification Plan
 
@@ -399,3 +399,56 @@ CLI として利用者に渡すため、統合テストは必須である。本�
 ## Documentation
 
 `prompts/specifications` は無い。更新するのは `README.md` のみ。
+
+## 検証結果 (2026-09-21)
+
+### 単体テストとビルド
+
+`./scripts/process/build.sh` PASS。`features/jev-test` の `check`、`cli`、`probe` が通り、`bin/jev-test.exe` を出力した。`decision-test` の単体テストも同じスクリプトで PASS。
+
+### 統合テスト
+
+```bash
+./scripts/process/build.sh && ./scripts/process/integration_test.sh --specify "TestJevProbe_"
+```
+
+`TestJevProbe_BinaryPostsBankOnce`、`TestJevProbe_BinaryRejectsUnauthorized`、`TestJevProbe_BinaryUsage` が PASS（約 0.7 秒）。llama-server は起動していない。相手は httptest であり、`api.typesafe.ai` へは出ていない。
+
+### 公式エンドポイント
+
+最初の引数なし実行は HTTP 400、`Unknown model: typesafe/jev-1.13`、終了コード 1、`wall_ms` 501.805。質問は分割していない。`GET /v1/models` は `jev-latest` と `jev-preview` だけを返したので、既定モデルを `jev-latest` に変えた。プログラムはモデルを自動では切り替えない。
+
+変更後、リポジトリルートで `./bin/jev-test.exe` を 1 回、続けて `./bin/jev-test.exe --json` を 1 回実行した。どちらも終了コード 0。キーは stdout にも stderr にも出ていない。
+
+| 実行 | status | wall_ms | model | questions | content_ok | usage |
+| --- | --- | --- | --- | --- | --- | --- |
+| テキスト | 200 | 558.824 | jev-1.13.0 | 30 | true | input 1808 / output 793 |
+| `--json` | 200 | 604.245 | jev-1.13.0 | 30 | true | input 1808 / output 793 |
+
+応答に `elapsedMs` は無かった。テキスト出力の回答は 30 行。先頭は `queue type=choice choice=account_access confidence=1`、`frustration type=score score=0.98 confidence=0.96`、`is_urgent type=noul noul=0.82`。
+
+### 総合判定結果
+
+**判定**: ✅ 動作確認完了
+
+#### テスト結果サマリ
+- 単体テスト: `check` 5、`cli` 5、`probe` 5 が PASS（サブテストを含む）
+- 統合テスト: 3 件 PASS
+- 公式実行: モデル修正後 2 件が終了コード 0。修正前の 400 は 1 件
+- 失敗（修正後）: 0 件
+- 事実上スキップ: 0 件
+
+#### チェック項目の結果
+| # | チェック項目 | 結果 | 備考 |
+|---|------------|------|------|
+| 1 | スキップされたテスト | ✅ | `t.Skip` 不使用。バイナリが無い場合は `t.Fatal` |
+| 2 | 部分的なエラー | ✅ | 401 テストの ERROR ログは拒否経路の期待値。公式の成功 2 回に ERROR は無い。修正前の 400 は未知モデルで、既定を直した |
+| 3 | 迂回による偽成功 | ✅ | 統合は `bin/jev-test.exe` を 1 回だけ POST する。再試行も質問分割も無い |
+| 4 | アダプタ・コンフィグの誤適用 | ✅ | 統合の `--url` は httptest。公式実行のログの url は `https://api.typesafe.ai/v1/systemone`、model は `jev-latest` |
+| 5 | テスト間の順序依存 | ✅ | `-count=1`。各テストが自分の httptest を持つ |
+| 6 | カバレッジ | ✅ | 形、1 回送信、`wall_ms`、終了コード 0/1/2、ファイル非改変、トークン非出力、ビルド済みバイナリ |
+| 7 | 外部システムの状態 | ✅ | 公式は 200、`content_ok` true、質問 30。`bank.json` は書き換えられていない |
+
+#### 判定理由
+ローカルの httptest では 30 質問の 1 回送信、形の確認、終了コードが通り、公式 API でも同じ入力が 200 で 30 回答になり `content_ok` が true だった。所要時間は約 0.56 秒と約 0.60 秒で、意味の正解ラベルは仕様どおり見ていない。
+

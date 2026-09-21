@@ -26,7 +26,7 @@ func Run(args []string, stdout, stderr io.Writer, log *logger.Logger) int {
 	input := fs.String("input", "features/decision-test/testdata/bank.json", "Request JSON file")
 	keyFile := fs.String("key-file", "tmp/typesafe-api-key.txt", "API key file")
 	url := fs.String("url", "https://api.typesafe.ai/v1/systemone", "Jev endpoint")
-	model := fs.String("model", "typesafe/jev-1.13", "Model used when the input omits model")
+	model := fs.String("model", "jev-latest", "Model used when the input omits model")
 	timeout := fs.Duration("timeout", 10*time.Minute, "HTTP timeout")
 	asJSON := fs.Bool("json", false, "Write one JSON object to stdout")
 	if err := fs.Parse(args); err != nil {

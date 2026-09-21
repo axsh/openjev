@@ -62,7 +62,7 @@ func TestJevProbe_BinaryPostsBankOnce(t *testing.T) {
 		t.Fatalf("auth %q", auth)
 	}
 	qs, _ := sent["questions"].(map[string]any)
-	if len(qs) != 30 || sent["model"] != "typesafe/jev-1.13" {
+	if len(qs) != 30 || sent["model"] != "jev-latest" {
 		t.Fatalf("sent questions %d model %#v", len(qs), sent["model"])
 	}
 	bank, err := os.ReadFile(filepath.Join(root, "features", "decision-test", "testdata", "bank.json"))

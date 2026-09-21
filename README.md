@@ -19,8 +19,8 @@ not committed (`models/`, `third_party/`, `bin/`).
 ## Official Jev probe
 
 `features/jev-test` sends `features/decision-test/testdata/bank.json` once to
-`POST https://api.typesafe.ai/v1/systemone` and prints `wall_ms` plus the
-shape of each answer. The API key is read from `tmp/typesafe-api-key.txt`,
+`POST https://api.typesafe.ai/v1/systemone` with model `jev-latest` and prints
+`wall_ms` plus the shape of each answer. The API key is read from `tmp/typesafe-api-key.txt`,
 which is gitignored. Do not commit the key.
 
 From the repository root on Windows:
