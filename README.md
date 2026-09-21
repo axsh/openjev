@@ -16,6 +16,24 @@ Primary code lives under `features/decision-test`. Paths, ports, and model pins
 are in `settings/decision-test.yaml`. Model weights and llama.cpp binaries are
 not committed (`models/`, `third_party/`, `bin/`).
 
+## Official Jev probe
+
+`features/jev-test` sends `features/decision-test/testdata/bank.json` once to
+`POST https://api.typesafe.ai/v1/systemone` and prints `wall_ms` plus the
+shape of each answer. The API key is read from `tmp/typesafe-api-key.txt`,
+which is gitignored. Do not commit the key.
+
+From the repository root on Windows:
+
+```bash
+./bin/jev-test.exe
+./bin/jev-test.exe --json
+```
+
+`./scripts/process/build.sh` builds `bin/jev-test.exe` and runs the unit tests.
+Those tests, and `scripts/process/integration_test.sh --specify "TestJevProbe_"`,
+talk to a local test server. They do not call the official endpoint.
+
 ## Requirements
 
 - Windows x64 with an NVIDIA GPU and a working CUDA stack (this repo pins the
